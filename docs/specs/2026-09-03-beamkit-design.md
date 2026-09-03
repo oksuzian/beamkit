@@ -1,6 +1,6 @@
 # beamkit — design
 
-**Status:** draft for review, 2026-09-03; `make_beamfile` + optional SAM publish added same day on request. Repo `oksuzian/beamkit` (new).
+**Status:** approved 2026-09-03 (all section 12 questions resolved, defaults accepted for 1, 2, 4); `make_beamfile` + optional SAM publish added same day on request. Repo `oksuzian/beamkit` (new).
 Sibling of `oksuzian/surrokit` in naming and shape: a small, focused
 package with an MCP server, no production machinery of its own.
 
@@ -402,16 +402,16 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
 
 ## 12. Open questions for review
 
-1. Default `events_per_job=1000`: the 2026-09-02 smoke ran 10 events in
-   4–6 minutes with field generation dominating; 1000 events per job is
-   a guess at a sensible production chunk. Confirm or change.
-2. Deck repo default `https://github.com/Mu2e/G4BeamlineScripts` and
-   `main_input="Mu2E.in"`: confirm these are the production deck and
-   entry point.
+1. Resolved 2026-09-03: default `events_per_job=1000` accepted. The
+   2026-09-02 smoke ran 10 events in 4–6 minutes with field generation
+   dominating, so per-event cost is not yet measured; revisit after the
+   first 1000-event run reports wall time.
+2. Resolved 2026-09-03: deck repo default
+   `https://github.com/Mu2e/G4BeamlineScripts` and `main_input="Mu2E.in"`
+   accepted.
 3. Resolved 2026-09-03: cuts are a parameter (`cuts` dict, section 5
    `make_beamfile`); `bm`/`ps` remain as presets reproducing
    MakeSource.py.
-4. Records under the caller's `/exp/mu2e/data/users/$USER/beamkit/`
-   even for `run_as="mu2epro"` runs (the ledger is mu2epro's, the record
-   is the operator's). Acceptable, or should mu2epro runs record under
-   `/exp/mu2e/data/users/mu2epro/beamkit/` via the same ksu path?
+4. Resolved 2026-09-03: records stay under the caller's
+   `/exp/mu2e/data/users/$USER/beamkit/` for every `run_as`, mu2epro
+   included — the ledger is mu2epro's, the record is the operator's.
