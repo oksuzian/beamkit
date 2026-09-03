@@ -121,8 +121,8 @@ prodtools (`scripts/start_mcp.sh`, `--check` lists registered tools).
 
 | tool | does | prodtools calls |
 |---|---|---|
-| `run_beamline(tag, deck_ref, run_as, params={}, events_per_job=1000, njobs=1, main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None, submit=True, confirm=False, deck_dir=None)` | materialize deck, allocate dsconf, write `entry.json` + `run.json`, create the campaign, and (if `submit`) fire the first tick | `push_cnf`, then `run_submissions(campaign_id=...)` |
-| `beamline_tick(run_id, run_as, confirm=False)` | one recovery/verify/top-up tick for that campaign (prodtools ticks are manual; nothing advances on its own) | `run_submissions(campaign_id=...)` |
+| `run_beamline(tag, deck_ref, run_as, params={}, events_per_job=1000, njobs=1, main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None, submit=True, confirm=False, deck_dir=None)` | materialize deck, allocate dsconf, write `entry.json` + `run.json`, create the campaign, and (if `submit`) fire the first tick, which submits the whole run when `njobs <= 10000` | `push_cnf`, then `run_submissions(campaign_id=...)` |
+| `make_recoveries(run_id, run_as, confirm=False)` | one prodtools tick: verify finished jobs, resubmit the missing indices, and submit any slice of this run not yet submitted (`njobs > 10000` only). Nothing advances on its own; a run with no failures never needs this call. **Ledger-wide:** prodtools scopes only the top-up to the campaign (`utils/submissions.py:1396`) — the verify/recovery pass covers every active campaign in the caller's ledger, so under `run_as="mu2epro"` it recovers production campaigns too. The tool result and `ticks[].summary` say what else moved. | `run_submissions(campaign_id=...)` |
 | `beamline_status(run_id)` | run record merged with live campaign state (queue, outputs); `mine=True` for self runs | `campaign_status` |
 | `list_beamline_runs(state=None)` | run records under the caller's beamkit dir, newest first | — |
 | `beamline_outputs(run_id)` | files of `nts.<owner>.<desc>.<dsconf>.root` with sizes and dCache paths | `find_datasets`, `dataset_details` |
@@ -133,12 +133,22 @@ Arguments are typed; `params` is a dict of g4bl parameter name to
 string or number and is passed through as the entry's `g4bl_params`
 (prodtools validates names and refuses the worker-owned
 `First_Event`/`Num_Events`/`histoFile`/`viewer`). `outloc` is one of
-`scratch`, `disk`, `tape`, applied to `nts.*.root`. `slice_size`
-defaults to `njobs` (one tick submits everything) capped at 1000.
+`scratch`, `disk`, `tape`, applied to `nts.*.root`.
+
+`slice_size` defaults to `min(njobs, SLICE_MAX)` with `SLICE_MAX =
+10000`, the per-submission job ceiling; a caller value above 10000 or
+below 1 is refused before any prodtools call (prodtools itself only
+checks `>= 1`). For `njobs <= 10000` the first tick submits the whole
+run and later ticks are recovery only. For `njobs > 10000` the run is
+several slices: the first tick feeds slices while the grid queue stays
+under prodtools' `--max-queued` cap, and `make_recoveries` submits the
+rest. Resubmission is a choice, not a requirement: a run whose failed
+indices nobody recovers is still a valid run — `make_beamfile` counts
+protons from the files that exist (below).
 
 `run_beamline` is not atomic across its two prodtools calls. If
 `push_cnf` succeeds and the tick fails, the run record holds the
-`campaign_id` and `beamline_tick` finishes the job; the error message
+`campaign_id` and `make_recoveries` finishes the job; the error message
 says so. If `push_cnf` itself fails after the SAM push (prodtools'
 documented `_ENQUEUE_RECOVERY` case), the record is written with
 `campaign_id: null` and the prodtools error text, and the dsconf is
@@ -153,8 +163,15 @@ into a single g4bl `beam ascii` input — the job `MakeSource.py` did by
 hand in 2013 — so a later run can resample from it:
 
 1. Inputs: the run's `nts.<owner>.<desc>.<dsconf>.root` files, dCache
-   paths from `beamline_outputs`. The run must be complete (every
-   index verified); a partial run is refused, not partially merged.
+   paths from `beamline_outputs`. Whatever exists is used — there is no
+   completeness check and no ledger query. A file in SAM is a complete
+   job: the worker pushes outputs only on g4bl exit 0, and g4bl exits 0
+   only after all `Num_Events`. So `pot = n_files * events_per_job`
+   exactly, and `missing_indices` = the run's index range minus the
+   sequencers present. Both go in the sidecar and the record; a stage-2
+   run normalizes to `pot`, never to `njobs * events_per_job`. Refused,
+   loudly: zero files; a file whose `NTuple/<plane>` is absent or
+   unreadable (the merge does not skip it).
 2. Read `NTuple/<plane>` with `uproot` in the ana 2.8.0 interpreter
    (subprocess; the prodtools venv has no ROOT or uproot — same
    interpreter rule surrokit documents). Apply two layers of cuts:
@@ -257,7 +274,8 @@ group its children without a schema change.
   sha, dir, pinned}, params, events_per_job, njobs, outloc, campaign_id,
   tarball, datasets, created, ticks: [{when, rc, summary}], prodtools:
   {root, commit}, beamkit_version, sweep_id: null, beamfiles: [
-  {flavor, cuts, path, sha256, rows, sam_name|null, location|null}],
+  {flavor, cuts, path, sha256, rows, pot, n_files, missing_indices,
+  sam_name|null, location|null}],
   beamfile_in: null}` — `beamfiles` is appended by `make_beamfile`;
   `beamfile_in` names the beam file a stage-2 run resampled from.
 
@@ -304,7 +322,7 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
   `mu2epro` without `confirm=True` is refused inside prodtools.
 - The operator's PreToolUse hook that prompts on
   `mcp__prodtools-write__*` with `run_as=mu2epro` must gain matching
-  rules for `mcp__beamkit__run_beamline` and `mcp__beamkit__beamline_tick`.
+  rules for `mcp__beamkit__run_beamline` and `mcp__beamkit__make_recoveries`.
   The README documents this as an install step; the hook is defence in
   depth and the in-tool `confirm` gate does not depend on it.
 - Read tools (`beamline_status`, `list_beamline_runs`,
@@ -343,7 +361,9 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
   refs, wrong-sha refusal, reuse), `compose.entry` (exact dict, params
   passthrough), `records` round trip, `tools.run_beamline` with
   `bridge` patched (push ok + tick ok; push ok + tick fails leaves a
-  recoverable record; push fails burns the dsconf).
+  recoverable record; push fails burns the dsconf; `slice_size` default
+  is `min(njobs, 10000)`; `slice_size=10001` and `slice_size=0` refused
+  before `bridge` is touched).
 - `beamfile`: cut table on a synthetic row set (each preset, a custom
   `cuts` dict, each structural cut, dedupe order); `cuts` validation
   (unknown key, missing key, keep+drop both set, negative floor, custom
@@ -354,8 +374,10 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
   byte-compared against a MakeSource.py-produced fixture, chunk
   splitter (row conservation, `njobs` files, EventID order kept).
   `tools.make_beamfile` with the reader subprocess and `bridge`
-  patched: refuses an incomplete run; `publish=False` writes file +
-  sidecar and no push; `publish=True` calls `push_file` with the nts
+  patched: a run with 3 of 5 indices present yields `pot = 3 *
+  events_per_job`, `missing_indices = [1, 4]`, and no ledger call; zero
+  files refused; a file without the plane refused, not skipped;
+  `publish=False` writes file + sidecar and no push; `publish=True` calls `push_file` with the nts
   parents and records the SAM name.
 - `scripts/start_mcp.sh --check` registration parity with
   `TOOL_NAMES`.
