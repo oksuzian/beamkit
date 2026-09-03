@@ -1,6 +1,6 @@
 # beamkit — design
 
-**Status:** draft for review, 2026-09-03. Repo `oksuzian/beamkit` (new).
+**Status:** draft for review, 2026-09-03; `make_beamfile` + optional SAM publish added same day on request. Repo `oksuzian/beamkit` (new).
 Sibling of `oksuzian/surrokit` in naming and shape: a small, focused
 package with an MCP server, no production machinery of its own.
 
@@ -126,7 +126,8 @@ prodtools (`scripts/start_mcp.sh`, `--check` lists registered tools).
 | `beamline_status(run_id)` | run record merged with live campaign state (queue, outputs); `mine=True` for self runs | `campaign_status` |
 | `list_beamline_runs(state=None)` | run records under the caller's beamkit dir, newest first | — |
 | `beamline_outputs(run_id)` | files of `nts.<owner>.<desc>.<dsconf>.root` with sizes and dCache paths | `find_datasets`, `dataset_details` |
-| `get_server_info()` | beamkit version, prodtools root and commit, venv python, deck cache dir, records dir | — |
+| `make_beamfile(run_id, flavor, run_as, plane="Z3712", publish=False, location=None, confirm=False)` | build a BLTrackFile beam file from a finished stage-1 run's ntuples; optionally publish it to SAM with the ntuples as parents | `find_datasets`/`dataset_details` (inputs); `push_file` when `publish=True` |
+| `get_server_info()` | beamkit version, prodtools root and commit, venv python, deck cache dir, records dir, beamfiles dir | — |
 
 Arguments are typed; `params` is a dict of g4bl parameter name to
 string or number and is passed through as the entry's `g4bl_params`
@@ -143,6 +144,68 @@ documented `_ENQUEUE_RECOVERY` case), the record is written with
 `campaign_id: null` and the prodtools error text, and the dsconf is
 burned — the next call allocates the next suffix.
 
+### `make_beamfile`
+
+Stage-1 decks record every track crossing the `zntuple BeamFile` plane
+(`Basic_Detectors.txt`: `z = $Coll_01_z - 173` = 3712 mm, hence tree
+`NTuple/Z3712`) in every nts. `make_beamfile` turns one run's ntuples
+into a single g4bl `beam ascii` input — the job `MakeSource.py` did by
+hand in 2013 — so a later run can resample from it:
+
+1. Inputs: the run's `nts.<owner>.<desc>.<dsconf>.root` files, dCache
+   paths from `beamline_outputs`. The run must be complete (every
+   index verified); a partial run is refused, not partially merged.
+2. Read `NTuple/<plane>` with `uproot` in the ana 2.8.0 interpreter
+   (subprocess; the prodtools venv has no ROOT or uproot — same
+   interpreter rule surrokit documents). Apply the flavor cuts as a
+   table:
+   - `bm` (beam): drop neutrons, gammas below 1 MeV, e± below 10 MeV
+   - `ps` (neutrons): keep PDG 2112 only
+   - always: `Pz > 0`, `PDGid <= 1e6`, one row per (EventID, TrackID),
+     TrackID written as 1 (g4bl warns on large TrackIDs), original
+     TrackID kept in the trailing column.
+   EventIDs are already unique across jobs (`First_Event =
+   index*events_per_job + 1`), so the merge is a concatenation.
+3. Write `<beamfiles_dir>/<run_id>.<flavor>.txt` in BLTrackFile format
+   (the two `#` header lines MakeSource.py wrote) plus
+   `<run_id>.<flavor>.json`: source run, plane, flavor, cuts, rows in,
+   rows out per cut, sha256, size, and — after publish — the SAM name.
+4. `publish=True`: name the file as a Mu2e artifact,
+   `etc.<owner>.<desc>Beam-<flavor>.<dsconf>.txt` (the `etc` tier the
+   cnf tarballs already use, so pushOutput's location tables apply),
+   and call prodtools `push_file(path, location, parents, run_as,
+   confirm)` with the nts files as parents. `location` defaults to
+   `tape` for `run_as="mu2epro"` and `scratch` for self; `disk` is
+   accepted. A published file is never copied tape→disk afterwards —
+   choose the location at publish time.
+   `publish=False` (default) leaves the file local; the sidecar still
+   records everything needed to publish later with the same call.
+
+A beam file at this plane carries ~2.4 tracks per proton before flavor
+cuts (smoke: 24 rows from 10 protons), ~110 bytes per row: a 1e7-proton
+stage-1 gives ~2.6 GB of ascii. That size is why stage-2 delivery
+(below) uses RCDS, not per-job dropbox.
+
+### Stage-2 resampling from a beam file — gated, not v1
+
+`run_beamline(..., beamfile=<run_id>.<flavor>)` is specified here so
+the record schema and the tool signature do not change later, but it
+ships only when three prerequisites outside beamkit exist:
+
+- **Deck:** `beam ascii filename=$Beam_File` behind `param -unset
+  Beam_File=...` in `Mu2E.in` (today's `READ_Beam_File=1|2` branches
+  hardcode `/mu2e/data/users/oksuzian/Source_V21_*.txt`, a path that no
+  longer exists). A `Mu2e/G4BeamlineScripts` change.
+- **prodtools:** a g4bl aux tarball riding `--tar_file_name dropbox://`
+  (RCDS, published once, the `code` channel) unpacked at
+  `$INPUT_TAR_DIR_LOCAL`, and `{index}` substitution in `g4bl_params`
+  values. ~70 lines.
+- **beamkit:** pre-split the beam file into `njobs` chunk files, tar
+  them, and set `g4bl_params = {"READ_Beam_File": 1, "Beam_File":
+  "$INPUT_TAR_DIR_LOCAL/chunks/chunk_{index}.txt"}`. Pre-splitting
+  avoids relying on `beam ascii firstEvent`/`nEvents` chunking
+  semantics, which are unverified.
+
 Sweeps (list-valued params → N runs) are **not** in v1. The run record
 already has a `sweep_id` field (null) so a later `sweep_beamline` can
 group its children without a schema change.
@@ -157,7 +220,10 @@ group its children without a schema change.
 - `run.json` — `{run_id, tag, dsconf, owner, run_as, deck: {url, ref,
   sha, dir, pinned}, params, events_per_job, njobs, outloc, campaign_id,
   tarball, datasets, created, ticks: [{when, rc, summary}], prodtools:
-  {root, commit}, beamkit_version, sweep_id: null}`.
+  {root, commit}, beamkit_version, sweep_id: null, beamfiles: [
+  {flavor, path, sha256, rows, sam_name|null, location|null}],
+  beamfile_in: null}` — `beamfiles` is appended by `make_beamfile`;
+  `beamfile_in` names the beam file a stage-2 run resampled from.
 
 Records are files, not a database: prodtools' ledger is the system of
 record for submission state; beamkit records only what prodtools does
@@ -180,7 +246,9 @@ beamkit/
     naming.py                    # validate_tag, allocate_dsconf(owner, desc, probe_fn)
     compose.py                   # entry(...) -> dict ; write_entry_json
     records.py                   # RunRecord dataclass, save/load/list, records_dir(run_as)
-    bridge.py                    # the ONLY module that imports prodtools; push_cnf/tick/status/outputs wrappers
+    bridge.py                    # the ONLY module that imports prodtools; push_cnf/tick/status/outputs/push_file wrappers
+    beamfile.py                  # cuts table, BLTrackFile writer, chunk splitter; the uproot reader runs as a subprocess
+    _read_plane.py               # standalone script run under the ana interpreter: nts paths + plane -> rows (tsv on stdout)
   tests/                         # unit tests; bridge patched, git operations against a temp bare repo
   docs/specs/2026-09-03-beamkit-design.md
 ```
@@ -221,9 +289,16 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
   beamkit exposes it only through `get_server_info` configuration
   (`BEAMKIT_PRODTOOLS_DIR` env), not as a per-run argument: which
   prodtools runs is deployment, not physics.
-- No other prodtools change. The g4bl entry schema is the contract:
-  `runner, desc, dsconf, g4bl_dir, main_input, events_per_job, njobs,
-  outloc, g4bl_params?`.
+- For `make_beamfile(publish=True)`: prodtools-write gains
+  `push_file(path, location, parents, run_as, confirm=False)`, ~40
+  lines wrapping pushOutput with a `parents_list.txt`, the same
+  `run_as`/`confirm` gates as `push_cnf`. Without it `make_beamfile`
+  works with `publish=False` only and says so.
+- For stage-2 resampling (gated, section 5): the g4bl aux tarball via
+  `--tar_file_name` and `{index}` substitution in `g4bl_params`.
+- Otherwise the g4bl entry schema is the contract: `runner, desc,
+  dsconf, g4bl_dir, main_input, events_per_job, njobs, outloc,
+  g4bl_params?`.
 
 ## 10. Testing
 
@@ -233,6 +308,14 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
   passthrough), `records` round trip, `tools.run_beamline` with
   `bridge` patched (push ok + tick ok; push ok + tick fails leaves a
   recoverable record; push fails burns the dsconf).
+- `beamfile`: cuts table on a synthetic row set (each flavor, each
+  always-cut, dedupe order), BLTrackFile header and column format
+  byte-compared against a MakeSource.py-produced fixture, chunk
+  splitter (row conservation, `njobs` files, EventID order kept).
+  `tools.make_beamfile` with the reader subprocess and `bridge`
+  patched: refuses an incomplete run; `publish=False` writes file +
+  sidecar and no push; `publish=True` calls `push_file` with the nts
+  parents and records the SAM name.
 - `scripts/start_mcp.sh --check` registration parity with
   `TOOL_NAMES`.
 - Smoke: `run_beamline(tag="G4blSmoke", deck_ref=<current
@@ -245,8 +328,11 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
 - Sweeps and surrogate-driven loops (surrokit is the ask/tell engine;
   a `sweep_beamline` that fans out runs and a client that feeds
   surrokit are v2, on top of the record schema above).
-- Beam-file inputs from SAM (g4bl `input_data`/`inloc`) — a prodtools
-  runner feature; beamkit gains one field when it exists.
+- Stage-2 resampling from a beam file is specified but gated on the
+  deck and prodtools prerequisites in section 5; it is not in the first
+  release. Per-job beam-file inputs resolved from SAM (g4bl
+  `input_data`/`inloc`) are not planned at all: RCDS delivery of a
+  pre-split file is the chosen route.
 - Histogram merging or analysis of the nts outputs.
 - Running g4bl locally (prodtools `runlocal` covers it).
 - Any write to SAM, the ledger, or jobsub outside prodtools' tools.
@@ -259,7 +345,10 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
 2. Deck repo default `https://github.com/Mu2e/G4BeamlineScripts` and
    `main_input="Mu2E.in"`: confirm these are the production deck and
    entry point.
-3. Records under the caller's `/exp/mu2e/data/users/$USER/beamkit/`
+3. `make_beamfile` flavor cuts are MakeSource.py's 2013 thresholds
+   (gammas < 1 MeV, e± < 10 MeV dropped in `bm`). Confirm they are
+   still what stage-2 studies want, or name the cuts a parameter.
+4. Records under the caller's `/exp/mu2e/data/users/$USER/beamkit/`
    even for `run_as="mu2epro"` runs (the ledger is mu2epro's, the record
    is the operator's). Acceptable, or should mu2epro runs record under
    `/exp/mu2e/data/users/mu2epro/beamkit/` via the same ksu path?
