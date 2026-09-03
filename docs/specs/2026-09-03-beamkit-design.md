@@ -126,7 +126,7 @@ prodtools (`scripts/start_mcp.sh`, `--check` lists registered tools).
 | `beamline_status(run_id)` | run record merged with live campaign state (queue, outputs); `mine=True` for self runs | `campaign_status` |
 | `list_beamline_runs(state=None)` | run records under the caller's beamkit dir, newest first | — |
 | `beamline_outputs(run_id)` | files of `nts.<owner>.<desc>.<dsconf>.root` with sizes and dCache paths | `find_datasets`, `dataset_details` |
-| `make_beamfile(run_id, flavor, run_as, plane="Z3712", publish=False, location=None, confirm=False)` | build a BLTrackFile beam file from a finished stage-1 run's ntuples; optionally publish it to SAM with the ntuples as parents | `find_datasets`/`dataset_details` (inputs); `push_file` when `publish=True` |
+| `make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=False, location=None, confirm=False)` | build a BLTrackFile beam file from a finished stage-1 run's ntuples with a preset or caller-supplied cut table; optionally publish it to SAM with the ntuples as parents | `find_datasets`/`dataset_details` (inputs); `push_file` when `publish=True` |
 | `get_server_info()` | beamkit version, prodtools root and commit, venv python, deck cache dir, records dir, beamfiles dir | — |
 
 Arguments are typed; `params` is a dict of g4bl parameter name to
@@ -157,19 +157,55 @@ hand in 2013 — so a later run can resample from it:
    index verified); a partial run is refused, not partially merged.
 2. Read `NTuple/<plane>` with `uproot` in the ana 2.8.0 interpreter
    (subprocess; the prodtools venv has no ROOT or uproot — same
-   interpreter rule surrokit documents). Apply the flavor cuts as a
-   table:
-   - `bm` (beam): drop neutrons, gammas below 1 MeV, e± below 10 MeV
-   - `ps` (neutrons): keep PDG 2112 only
-   - always: `Pz > 0`, `PDGid <= 1e6`, one row per (EventID, TrackID),
-     TrackID written as 1 (g4bl warns on large TrackIDs), original
-     TrackID kept in the trailing column.
+   interpreter rule surrokit documents). Apply two layers of cuts:
+
+   **Structural cuts, always on, not parameters** (they make the file a
+   valid g4bl source, not a physics choice): `Pz > 0`; `PDGid <= 1e6`
+   (g4bl cannot source exotics); drop a row whose (EventID, TrackID)
+   repeats the previous row; TrackID written as 1 (g4bl warns on large
+   TrackIDs), original TrackID kept in the trailing column.
+
+   **Physics cuts — the `cuts` parameter.** A dict with exactly these
+   keys, validated before any file is read:
+
+   ```python
+   {"keep_pdg": list[int] | None,   # exclusive whitelist; None = all PDG ids
+    "drop_pdg": list[int],          # blacklist; must be [] when keep_pdg is set
+    "min_p_mev": dict[int, float]}  # per-PDG floor on |p| in MeV/c; rows below are dropped
+   ```
+
+   Two presets ship, reproducing MakeSource.py (2013) exactly — its
+   thresholds are on momentum magnitude, not kinetic energy:
+
+   ```python
+   FLAVORS = {
+       "bm": {"keep_pdg": None,   "drop_pdg": [2112], "min_p_mev": {22: 1.0, 11: 10.0, -11: 10.0}},
+       "ps": {"keep_pdg": [2112], "drop_pdg": [],     "min_p_mev": {}},
+   }
+   ```
+
+   Resolution rules, all refusals not fallbacks:
+   - `cuts=None`: `flavor` must be a preset name; any other name is
+     refused (there is no "no cuts" default — that is a cut table too,
+     spelled `{"keep_pdg": None, "drop_pdg": [], "min_p_mev": {}}`).
+   - `cuts` given: `flavor` is a free label matching `^[a-z][a-z0-9]{0,15}$`
+     and must NOT be a preset name — a preset name with different cuts
+     would put two meanings behind one `Beam-<flavor>` SAM name.
+   - Unknown keys, a missing key, a non-int PDG id, a negative floor, or
+     `keep_pdg` and `drop_pdg` both non-empty are refused with the
+     offending key named.
+
    EventIDs are already unique across jobs (`First_Event =
    index*events_per_job + 1`), so the merge is a concatenation.
 3. Write `<beamfiles_dir>/<run_id>.<flavor>.txt` in BLTrackFile format
    (the two `#` header lines MakeSource.py wrote) plus
-   `<run_id>.<flavor>.json`: source run, plane, flavor, cuts, rows in,
-   rows out per cut, sha256, size, and — after publish — the SAM name.
+   `<run_id>.<flavor>.json`: source run, plane, flavor, the resolved
+   `cuts` dict (preset or caller-supplied — the sidecar never says
+   "bm", it says what bm meant), rows in, rows dropped per structural
+   and per physics cut, sha256, size, and — after publish — the SAM
+   name. Two beam files with the same flavor label but different cuts
+   cannot exist: the label is part of the file name, and an existing
+   `<run_id>.<flavor>.txt` is refused, not overwritten.
 4. `publish=True`: name the file as a Mu2e artifact,
    `etc.<owner>.<desc>Beam-<flavor>.<dsconf>.txt` (the `etc` tier the
    cnf tarballs already use, so pushOutput's location tables apply),
@@ -221,7 +257,7 @@ group its children without a schema change.
   sha, dir, pinned}, params, events_per_job, njobs, outloc, campaign_id,
   tarball, datasets, created, ticks: [{when, rc, summary}], prodtools:
   {root, commit}, beamkit_version, sweep_id: null, beamfiles: [
-  {flavor, path, sha256, rows, sam_name|null, location|null}],
+  {flavor, cuts, path, sha256, rows, sam_name|null, location|null}],
   beamfile_in: null}` — `beamfiles` is appended by `make_beamfile`;
   `beamfile_in` names the beam file a stage-2 run resampled from.
 
@@ -308,8 +344,13 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
   passthrough), `records` round trip, `tools.run_beamline` with
   `bridge` patched (push ok + tick ok; push ok + tick fails leaves a
   recoverable record; push fails burns the dsconf).
-- `beamfile`: cuts table on a synthetic row set (each flavor, each
-  always-cut, dedupe order), BLTrackFile header and column format
+- `beamfile`: cut table on a synthetic row set (each preset, a custom
+  `cuts` dict, each structural cut, dedupe order); `cuts` validation
+  (unknown key, missing key, keep+drop both set, negative floor, custom
+  cuts under a preset flavor name, unknown flavor with `cuts=None` — each
+  refused naming the key); preset-vs-custom equivalence (`cuts=FLAVORS["bm"]`
+  under flavor `bmcopy` produces byte-identical rows to flavor `bm`);
+  BLTrackFile header and column format
   byte-compared against a MakeSource.py-produced fixture, chunk
   splitter (row conservation, `njobs` files, EventID order kept).
   `tools.make_beamfile` with the reader subprocess and `bridge`
@@ -345,9 +386,9 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
 2. Deck repo default `https://github.com/Mu2e/G4BeamlineScripts` and
    `main_input="Mu2E.in"`: confirm these are the production deck and
    entry point.
-3. `make_beamfile` flavor cuts are MakeSource.py's 2013 thresholds
-   (gammas < 1 MeV, e± < 10 MeV dropped in `bm`). Confirm they are
-   still what stage-2 studies want, or name the cuts a parameter.
+3. Resolved 2026-09-03: cuts are a parameter (`cuts` dict, section 5
+   `make_beamfile`); `bm`/`ps` remain as presets reproducing
+   MakeSource.py.
 4. Records under the caller's `/exp/mu2e/data/users/$USER/beamkit/`
    even for `run_as="mu2epro"` runs (the ledger is mu2epro's, the record
    is the operator's). Acceptable, or should mu2epro runs record under
