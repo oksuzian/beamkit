@@ -13,7 +13,7 @@ def _git(*args, cwd):
 
 @pytest.fixture
 def upstream(tmp_path):
-    """A bare repo with two commits and a tag `v1` on the first."""
+    """A bare repo with two commits: annotated tag `v1` on the first, lightweight tag `v2` on the second."""
     work = tmp_path / "work"
     work.mkdir()
     _git("init", "-q", "-b", "main", cwd=work)
@@ -27,6 +27,7 @@ def upstream(tmp_path):
     (work / "Mu2E.in").write_text("param -unset First_Event=1\nparam epsMax=0.01\n")
     _git("commit", "-q", "-am", "two", cwd=work)
     sha2 = _git("rev-parse", "HEAD", cwd=work)
+    _git("tag", "v2", cwd=work)
     bare = tmp_path / "upstream.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(work), str(bare)], check=True)
     _git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=bare)
@@ -39,6 +40,10 @@ def test_resolve_full_sha_passthrough(upstream):
 
 def test_resolve_annotated_tag_gives_commit(upstream):
     assert decks.resolve_ref(upstream["url"], "v1") == upstream["sha1"]
+
+
+def test_resolve_lightweight_tag(upstream):
+    assert decks.resolve_ref(upstream["url"], "v2") == upstream["sha2"]
 
 
 def test_resolve_branch(upstream):
@@ -98,6 +103,43 @@ def test_materialize_unfetchable_leaves_no_dir(tmp_path):
     with pytest.raises(decks.DeckError):
         decks.materialize(f"file://{tmp_path}/missing.git", "0" * 40, cache)
     assert not any(cache.iterdir()) if cache.exists() else True
+
+
+def test_materialize_dest_appearing_midway_is_reused(upstream, tmp_path, monkeypatch):
+    import shutil
+    cache = tmp_path / "decks"
+    sha = upstream["sha1"]
+    dest = cache / sha[:12]
+    original_git = decks._git
+    appeared = {"done": False}
+
+    def wrapper(*args, cwd=None):
+        if args and args[0] == "checkout" and not appeared["done"]:
+            appeared["done"] = True
+            # Simulate a concurrent materialize() winning the race: build
+            # dest for real via a separate cache dir, then move it into
+            # place before this call's part.rename(dest) can run.
+            concurrent = decks.materialize(upstream["url"], sha, tmp_path / "other-decks")
+            shutil.move(concurrent.dir, dest)
+        return original_git(*args, cwd=cwd)
+
+    monkeypatch.setattr(decks, "_git", wrapper)
+    pin = decks.materialize(upstream["url"], sha, cache)
+    assert pin.dir == str(dest)
+    assert original_git("rev-parse", "HEAD", cwd=dest) == sha
+    assert not list(cache.glob("*.part-*"))
+
+
+def test_materialize_ignores_foreign_part_dirs(upstream, tmp_path):
+    cache = tmp_path / "decks"
+    sha = upstream["sha1"]
+    stale = cache / f"{sha[:12]}.part-stale"
+    stale.mkdir(parents=True)
+    (stale / "marker.txt").write_text("keep me")
+    pin = decks.materialize(upstream["url"], sha, cache)
+    assert pin.sha == sha
+    assert stale.exists()
+    assert (stale / "marker.txt").read_text() == "keep me"
 
 
 def test_inspect_local_clean_and_dirty(upstream):

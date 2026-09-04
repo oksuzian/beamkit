@@ -2,6 +2,7 @@
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -53,16 +54,15 @@ def resolve_ref(url: str, ref: str) -> str:
 def materialize(url: str, ref: str, cache_dir: Path) -> DeckPin:
     """Fetch exactly `ref`'s commit into cache_dir/<sha12>/; reuse if present."""
     sha = resolve_ref(url, ref)
-    dest = Path(cache_dir) / sha[:12]
+    cache_dir = Path(cache_dir)
+    dest = cache_dir / sha[:12]
     if dest.exists():
         head = _git("rev-parse", "HEAD", cwd=dest)
         if head != sha:
             raise DeckError(f"{dest} holds commit {head}, expected {sha}; remove it by hand")
         return DeckPin(url, ref, sha, str(dest), True)
-    part = dest.with_name(dest.name + ".part")
-    if part.exists():
-        shutil.rmtree(part)
-    part.mkdir(parents=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    part = Path(tempfile.mkdtemp(prefix=dest.name + ".part-", dir=cache_dir))
     try:
         _git("init", "-q", cwd=part)
         _git("remote", "add", "origin", url, cwd=part)
@@ -74,7 +74,16 @@ def materialize(url: str, ref: str, cache_dir: Path) -> DeckPin:
     except Exception:
         shutil.rmtree(part, ignore_errors=True)
         raise
-    part.rename(dest)
+    try:
+        part.rename(dest)
+    except OSError:
+        # A concurrent materialize() won the race and dest now exists.
+        existing = _git("rev-parse", "HEAD", cwd=dest)
+        shutil.rmtree(part)
+        if existing != sha:
+            raise DeckError(f"{dest} appeared concurrently holding commit {existing}, "
+                            f"expected {sha}")
+        return DeckPin(url, ref, sha, str(dest), True)
     return DeckPin(url, ref, sha, str(dest), True)
 
 
