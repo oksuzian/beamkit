@@ -165,7 +165,10 @@ def _dataset(rec):
 
 def beamline_outputs(run_id) -> dict:
     rec = _load(run_id)
-    files = bridge.dataset_files(_dataset(rec), rec.outloc)
+    try:
+        files = bridge.dataset_files(_dataset(rec), rec.outloc)
+    except bridge.BridgeError as e:
+        raise ToolError(f"beamline_outputs: dataset_files failed: {e}") from e
     return {"run_id": run_id, "dataset": _dataset(rec), "location": rec.outloc,
             "n_files": len(files), "total_size": sum(f["size"] for f in files), "files": files}
 
@@ -197,7 +200,10 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
     if out_txt.exists() or out_json.exists():
         raise ToolError(f"{out_txt} exists; a beam file is never overwritten (pick another flavor label)")
     dataset = _dataset(rec)
-    files = bridge.dataset_files(dataset, rec.outloc)
+    try:
+        files = bridge.dataset_files(dataset, rec.outloc)
+    except bridge.BridgeError as e:
+        raise ToolError(f"make_beamfile: dataset_files failed: {e}") from e
     if not files:
         raise ToolError(f"no files in {dataset} at {rec.outloc}: nothing to build a beam file from")
     present = [f["index"] for f in files]
@@ -219,8 +225,16 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
         try:
             bridge.push_file(staged, location, side["source_files"], run_as, confirm)
         except Exception as e:
-            out_json.write_text(json.dumps(side, indent=2) + "\n")
-            raise ToolError(f"beam file {out_txt} written but publish failed: {e}") from e
+            try:
+                staged.unlink()
+            except OSError:
+                pass
+            try:
+                out_txt.unlink()
+            except OSError:
+                pass
+            raise ToolError(f"beam file discarded: publish failed, so nothing was left behind; "
+                            f"this call can be retried: {e}") from e
         side["sam_name"], side["location"] = sam_name, location
     out_json.write_text(json.dumps(side, indent=2) + "\n")
     rec.beamfiles.append(side)

@@ -98,10 +98,12 @@ def test_publish_mu2epro_defaults_tape_needs_confirm(fake):
     assert out["location"] == "tape" and out["sam_name"] == "etc.mu2e.TBeam-bm.e470313.txt"
 
 
-def test_publish_bad_location(fake):
+def test_publish_bad_location(fake, beamkit_home):
     _record()
     with pytest.raises(tools.ToolError, match="location"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True, location="resilient")
+    assert fake["push_file"] == []
+    assert not (beamkit_home / "beamfiles").exists() or not list((beamkit_home / "beamfiles").iterdir())
 
 
 def test_publish_without_push_file_in_prodtools(fake, monkeypatch):
@@ -112,6 +114,35 @@ def test_publish_without_push_file_in_prodtools(fake, monkeypatch):
     monkeypatch.setattr(tools.bridge, "push_file", missing)
     with pytest.raises(tools.ToolError, match="publish=False"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
+
+
+def test_publish_failure_discards_beamfile_and_allows_retry(fake, monkeypatch, beamkit_home):
+    _record()
+
+    def failing_push(path, location, parents, run_as, confirm):
+        raise RuntimeError("push down")
+    monkeypatch.setattr(tools.bridge, "push_file", failing_push)
+    with pytest.raises(tools.ToolError, match="discarded"):
+        tools.make_beamfile("T.e470313", "bm", "self", publish=True)
+    bf_dir = beamkit_home / "beamfiles"
+    names = {p.name for p in bf_dir.iterdir()} if bf_dir.exists() else set()
+    assert not any(n.endswith(".txt") for n in names)
+    assert not any(n.endswith(".json") for n in names)
+    assert not any(n.startswith("etc.") for n in names)
+    rec = records.load("T.e470313", paths.runs_dir())
+    assert rec.beamfiles == []
+    # the retry path is no longer blocked by a leftover staged link / exists-check
+    out = tools.make_beamfile("T.e470313", "bm", "self", publish=False)
+    assert out["sam_name"] is None and out["location"] is None
+
+
+def test_dataset_files_bridge_error_becomes_tool_error(fake, monkeypatch):
+    _record()
+    from beamkit import bridge
+    monkeypatch.setattr(tools.bridge, "dataset_files",
+                        lambda ds, loc: (_ for _ in ()).throw(bridge.BridgeError("boom")))
+    with pytest.raises(tools.ToolError, match="dataset_files"):
+        tools.make_beamfile("T.e470313", "bm", "self")
 
 
 @pytest.mark.skipif(not os.path.exists(beamfile.ANA_PYTHON), reason="ana interpreter not on this host")
