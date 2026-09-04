@@ -4,6 +4,8 @@ import hashlib
 import math
 import os
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Iterable, Iterator, NamedTuple
 
@@ -181,19 +183,24 @@ def iter_plane_rows(paths, plane, python=None) -> Iterator[Row]:
     """Rows of NTuple/<plane> from every file, in order, via the ana
     interpreter. Any reader failure is raised with its stderr; nothing is
     skipped."""
-    import subprocess
-    import tempfile
     python = python or ANA_PYTHON
     if not os.path.exists(python):
         raise BeamfileError(f"ana interpreter {python} not found (set BEAMKIT_ANA_PYTHON)")
     cmd = [python, str(_READ_PLANE), plane, *[str(p) for p in paths]]
     with tempfile.TemporaryFile(mode="w+") as err:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, text=True)
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, text=True)
+        except OSError as e:
+            raise BeamfileError(f"could not run ana interpreter {python!r}: {e}") from e
         try:
             for line in proc.stdout:
-                f = line.rstrip("\n").split("\t")
-                yield Row(float(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5]),
-                          float(f[6]), int(f[7]), int(f[8]), int(f[9]), int(f[10]))
+                try:
+                    f = line.rstrip("\n").split("\t")
+                    yield Row(float(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5]),
+                              float(f[6]), int(f[7]), int(f[8]), int(f[9]), int(f[10]))
+                except (ValueError, IndexError) as e:
+                    raise BeamfileError(
+                        f"_read_plane.py produced malformed output for plane {plane!r}: {line!r} ({e})") from e
         finally:
             proc.stdout.close()
             rc = proc.wait()

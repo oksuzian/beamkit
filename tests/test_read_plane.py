@@ -53,9 +53,34 @@ def test_iter_plane_rows_bad_interpreter_raises(tmp_path):
         list(beamfile.iter_plane_rows([FIX / "plane47.root"], "Z3712", python=str(tmp_path / "nope")))
 
 
+def test_iter_plane_rows_malformed_output_raises(tmp_path):
+    # Interpreter-shaped stand-in: iter_plane_rows always invokes
+    # [python, SCRIPT, plane, *paths], so a shell script masquerading as the
+    # interpreter works fine — it ignores the SCRIPT/plane/path arguments.
+    fake = tmp_path / "fake_ana"
+    fake.write_text("#!/bin/bash\necho -e '1.0\\t2.0'\nexit 0\n")
+    fake.chmod(0o755)
+    with pytest.raises(beamfile.BeamfileError, match="Z3712"):
+        list(beamfile.iter_plane_rows([FIX / "plane47.root"], "Z3712", python=str(fake)))
+
+
+def test_iter_plane_rows_non_executable_interpreter_raises(tmp_path):
+    fake = tmp_path / "not_executable"
+    fake.write_text("not a real interpreter\n")
+    fake.chmod(0o644)
+    with pytest.raises(beamfile.BeamfileError) as exc:
+        list(beamfile.iter_plane_rows([FIX / "plane47.root"], "Z3712", python=str(fake)))
+    assert str(fake) in str(exc.value)
+
+
 @needs_ana
 @pytest.mark.parametrize("flavor", ["bm", "ps"])
 def test_build_matches_makesource_reference(tmp_path, flavor):
+    # plane47.root has no exotic particles (PDGid > 1e6) and only 1-2
+    # duplicate / negative-Pz rows, so this byte-comparison does not exercise
+    # those three structural cuts. They are covered directly by
+    # test_structural_exotic_dropped, test_structural_pz_negative_dropped_zero_kept,
+    # and test_duplicate_is_against_last_written_row in tests/test_beamfile.py.
     out = tmp_path / f"{flavor}.txt"
     stats = beamfile.build([FIX / "plane47.root"], "Z3712", beamfile.FLAVORS[flavor], out)
     assert out.read_bytes() == (FIX / f"reference_{flavor}.txt").read_bytes()
