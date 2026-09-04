@@ -172,6 +172,40 @@ def missing_indices(present, njobs) -> list[int]:
     return sorted(set(range(njobs)) - set(present))
 
 
+ANA_PYTHON = os.environ.get("BEAMKIT_ANA_PYTHON",
+                            "/cvmfs/mu2e.opensciencegrid.org/env/ana/2.8.0/bin/python")
+_READ_PLANE = Path(__file__).with_name("_read_plane.py")
+
+
+def iter_plane_rows(paths, plane, python=None) -> Iterator[Row]:
+    """Rows of NTuple/<plane> from every file, in order, via the ana
+    interpreter. Any reader failure is raised with its stderr; nothing is
+    skipped."""
+    import subprocess
+    import tempfile
+    python = python or ANA_PYTHON
+    if not os.path.exists(python):
+        raise BeamfileError(f"ana interpreter {python} not found (set BEAMKIT_ANA_PYTHON)")
+    cmd = [python, str(_READ_PLANE), plane, *[str(p) for p in paths]]
+    with tempfile.TemporaryFile(mode="w+") as err:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL, text=True)
+        try:
+            for line in proc.stdout:
+                f = line.rstrip("\n").split("\t")
+                yield Row(float(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[4]), float(f[5]),
+                          float(f[6]), int(f[7]), int(f[8]), int(f[9]), int(f[10]))
+        finally:
+            proc.stdout.close()
+            rc = proc.wait()
+        if rc != 0:
+            err.seek(0)
+            raise BeamfileError(f"_read_plane.py failed (rc={rc}) for plane {plane!r}: {err.read().strip()}")
+
+
+def build(paths, plane, cuts, out_path, python=None) -> dict:
+    return write_rows(out_path, iter_plane_rows(paths, plane, python), cuts)
+
+
 def split_chunks(src_txt, njobs, out_dir) -> list[Path]:
     """Contiguous split of a beam file's data rows into njobs chunk files,
     each with the three header lines. Stage-2 (gated) uses these."""
