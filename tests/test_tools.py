@@ -99,6 +99,23 @@ def test_slice_size_out_of_range_refused_before_bridge(fake_bridge, bad):
     assert fake_bridge["push_cnf"] == [] and fake_bridge["cnf_exists"] == []
 
 
+def test_outloc_disk_refused_for_self_before_any_side_effect(fake_bridge, beamkit_home):
+    with pytest.raises(tools.ToolError, match="storage.modify"):
+        _run(outloc="disk")
+    assert fake_bridge["cnf_exists"] == [] and fake_bridge["push_cnf"] == []
+    assert not (beamkit_home / "runs").exists()
+
+
+def test_outloc_disk_allowed_for_mu2epro(fake_bridge):
+    assert _run(outloc="disk", run_as="mu2epro", confirm=True)["outloc"] == "disk"
+
+
+def test_outloc_unknown_refused(fake_bridge):
+    with pytest.raises(tools.ToolError, match="outloc"):
+        _run(outloc="resilient")
+    assert fake_bridge["cnf_exists"] == []
+
+
 def test_submit_false_creates_only(fake_bridge):
     out = _run(submit=False)
     assert out["state"] == "created" and out["campaign_id"] == 7 and fake_bridge["tick"] == []

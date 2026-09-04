@@ -87,6 +87,11 @@ Everything lives under `BEAMKIT_HOME` (default
 
 `run_as` is required on every mutating tool and passed through
 unchanged: beamkit adds no gate of its own and removes none.
+`outloc="disk"` (`/mu2e/persistent/datasets`) needs
+`run_as="mu2epro"`: no other account has `storage.modify` there, so a
+self run would finish g4bl on every worker and then 403 in `pushOutput`.
+It is refused up front.
+
 `make_beamfile(publish=True)` additionally requires `run_as` to match
 the run's own: the beam file is named from the record's owner and pushed
 as `run_as`, so a mismatch would publish one identity's name under the

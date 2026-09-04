@@ -29,6 +29,18 @@ def _require(run_as, confirm):
                         "production grid jobs; pass confirm=True")
 
 
+def _outloc(outloc, run_as):
+    """beamkit holds the output location and the account at the same moment,
+    so it can refuse the pair prodtools only discovers on the worker."""
+    if outloc not in compose.OUTLOCS:
+        raise ToolError(f"outloc must be one of {compose.OUTLOCS}, got {outloc!r}")
+    if outloc == "disk" and run_as != "mu2epro":
+        raise ToolError("outloc='disk' is /mu2e/persistent/datasets, where only mu2epro has "
+                        "storage.modify: every worker would run g4bl to completion and then 403 in "
+                        "pushOutput. Use outloc='scratch', or run_as='mu2epro'")
+    return outloc
+
+
 def _slice_size(slice_size, njobs):
     if slice_size is None:
         return min(njobs, SLICE_MAX)
@@ -93,6 +105,7 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
                  main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None,
                  submit=True, confirm=False, deck_dir=None, deck_url=DEFAULT_DECK_URL) -> dict:
     _require(run_as, confirm)
+    _outloc(outloc, run_as)
     try:
         naming.validate_tag(tag)
         params = compose.validate_params({} if params is None else params)
