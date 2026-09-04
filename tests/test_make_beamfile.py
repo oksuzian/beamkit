@@ -136,6 +136,25 @@ def test_publish_failure_discards_beamfile_and_allows_retry(fake, monkeypatch, b
     assert out["sam_name"] is None and out["location"] is None
 
 
+def test_publish_link_failure_discards_beamfile_and_allows_retry(fake, beamkit_home):
+    _record()
+    bf_dir = beamkit_home / "beamfiles"
+    bf_dir.mkdir(parents=True, exist_ok=True)
+    stale = bf_dir / "etc.u.TBeam-bm.e470313.txt"
+    stale.write_text("debris from a prior failed attempt whose unlink was itself swallowed\n")
+    with pytest.raises(tools.ToolError, match="discarded"):
+        tools.make_beamfile("T.e470313", "bm", "self", publish=True)
+    assert fake["push_file"] == []
+    names = {p.name for p in bf_dir.iterdir()} if bf_dir.exists() else set()
+    assert not any(n.endswith(".txt") for n in names)
+    assert not any(n.endswith(".json") for n in names)
+    rec = records.load("T.e470313", paths.runs_dir())
+    assert rec.beamfiles == []
+    # the retry path is no longer blocked by the stale staged link / exists-check
+    out = tools.make_beamfile("T.e470313", "bm", "self", publish=False)
+    assert out["sam_name"] is None and out["location"] is None
+
+
 def test_dataset_files_bridge_error_becomes_tool_error(fake, monkeypatch):
     _record()
     from beamkit import bridge

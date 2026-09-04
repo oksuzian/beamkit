@@ -221,8 +221,8 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
     if publish:
         sam_name = f"etc.{rec.owner}.{rec.tag}Beam-{flavor}.{rec.dsconf}.txt"
         staged = out_dir / sam_name
-        os.link(out_txt, staged)
         try:
+            os.link(out_txt, staged)
             bridge.push_file(staged, location, side["source_files"], run_as, confirm)
         except Exception as e:
             try:
