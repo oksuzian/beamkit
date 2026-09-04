@@ -57,6 +57,8 @@ def materialize(url: str, ref: str, cache_dir: Path) -> DeckPin:
     cache_dir = Path(cache_dir)
     dest = cache_dir / sha[:12]
     if dest.exists():
+        if not dest.is_dir():
+            raise DeckError(f"{dest} exists and is not a directory; remove it by hand")
         head = _git("rev-parse", "HEAD", cwd=dest)
         if head != sha:
             raise DeckError(f"{dest} holds commit {head}, expected {sha}; remove it by hand")
@@ -76,14 +78,20 @@ def materialize(url: str, ref: str, cache_dir: Path) -> DeckPin:
         raise
     try:
         part.rename(dest)
-    except OSError:
-        # A concurrent materialize() won the race and dest now exists.
-        existing = _git("rev-parse", "HEAD", cwd=dest)
-        shutil.rmtree(part)
-        if existing != sha:
-            raise DeckError(f"{dest} appeared concurrently holding commit {existing}, "
-                            f"expected {sha}")
-        return DeckPin(url, ref, sha, str(dest), True)
+    except OSError as exc:
+        head = None
+        try:
+            if dest.is_dir():
+                head = _git("rev-parse", "HEAD", cwd=dest)
+        except DeckError:
+            head = None
+        finally:
+            shutil.rmtree(part, ignore_errors=True)
+        if head == sha:
+            return DeckPin(url, ref, sha, str(dest), True)
+        raise DeckError(
+            f"could not place deck {sha} at {dest}: {exc}; "
+            f"{dest} holds {head or 'no git checkout'}") from exc
     return DeckPin(url, ref, sha, str(dest), True)
 
 

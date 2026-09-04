@@ -130,6 +130,41 @@ def test_materialize_dest_appearing_midway_is_reused(upstream, tmp_path, monkeyp
     assert not list(cache.glob("*.part-*"))
 
 
+def test_materialize_dest_is_a_plain_file_raises_deckerror_and_cleans_up(upstream, tmp_path):
+    cache = tmp_path / "decks"
+    cache.mkdir()
+    sha = upstream["sha1"]
+    (cache / sha[:12]).write_text("x")
+    with pytest.raises(decks.DeckError, match="not a directory"):
+        decks.materialize(upstream["url"], sha, cache)
+    assert not list(cache.glob("*.part-*"))
+
+
+def test_materialize_dest_becomes_wrong_commit_midway_raises_and_cleans_up(upstream, tmp_path, monkeypatch):
+    import shutil
+    cache = tmp_path / "decks"
+    sha1 = upstream["sha1"]
+    sha2 = upstream["sha2"]
+    dest = cache / sha1[:12]
+    original_git = decks._git
+    appeared = {"done": False}
+
+    def wrapper(*args, cwd=None):
+        if args and args[0] == "checkout" and not appeared["done"]:
+            appeared["done"] = True
+            # A competing writer lands a DIFFERENT commit at the same
+            # cache slot before this call's part.rename(dest) can run.
+            concurrent = decks.materialize(upstream["url"], sha2, tmp_path / "other-decks")
+            shutil.move(concurrent.dir, dest)
+        return original_git(*args, cwd=cwd)
+
+    monkeypatch.setattr(decks, "_git", wrapper)
+    with pytest.raises(decks.DeckError) as excinfo:
+        decks.materialize(upstream["url"], sha1, cache)
+    assert sha1 in str(excinfo.value) and sha2 in str(excinfo.value)
+    assert not list(cache.glob("*.part-*"))
+
+
 def test_materialize_ignores_foreign_part_dirs(upstream, tmp_path):
     cache = tmp_path / "decks"
     sha = upstream["sha1"]
