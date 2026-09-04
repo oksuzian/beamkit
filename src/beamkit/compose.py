@@ -50,7 +50,7 @@ def entry(*, tag, dsconf, deck_dir, main_input, events_per_job, njobs, outloc, p
         "njobs": njobs,
         "outloc": {"nts.*.root": outloc},
     }
-    params = validate_params(params or {})
+    params = validate_params({} if params is None else params)
     if params:
         e["g4bl_params"] = params
     return e

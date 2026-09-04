@@ -53,3 +53,16 @@ def test_write_entry_json_is_a_list(deck, tmp_path):
                       events_per_job=10, njobs=3, outloc="scratch", params={})
     p = compose.write_entry_json(e, tmp_path / "entry.json")
     assert json.loads(p.read_text()) == [e]
+
+
+@pytest.mark.parametrize("bad", [[], 0, False, "", ()])
+def test_entry_refuses_falsy_non_dict_params(deck, bad):
+    with pytest.raises(compose.ComposeError, match="params"):
+        compose.entry(tag="T", dsconf="d", deck_dir=deck, main_input="Mu2E.in",
+                      events_per_job=10, njobs=3, outloc="scratch", params=bad)
+
+
+def test_entry_params_none_means_no_params(deck):
+    e = compose.entry(tag="T", dsconf="d", deck_dir=deck, main_input="Mu2E.in",
+                      events_per_job=10, njobs=3, outloc="scratch", params=None)
+    assert "g4bl_params" not in e
