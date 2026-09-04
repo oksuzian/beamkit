@@ -1,8 +1,10 @@
 """The beamkit tools. Orchestration only: naming, decks, compose, records
 do the work; bridge talks to prodtools."""
+import json
+import os
 import sys
 
-from beamkit import __version__, bridge, compose, decks, naming, paths, records
+from beamkit import __version__, beamfile, bridge, compose, decks, naming, paths, records
 from beamkit.decks import DEFAULT_DECK_URL
 
 SLICE_MAX = 10000
@@ -166,6 +168,64 @@ def beamline_outputs(run_id) -> dict:
     files = bridge.dataset_files(_dataset(rec), rec.outloc)
     return {"run_id": run_id, "dataset": _dataset(rec), "location": rec.outloc,
             "n_files": len(files), "total_size": sum(f["size"] for f in files), "files": files}
+
+
+LOCATIONS = ("scratch", "disk", "tape")
+
+
+def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=False,
+                  location=None, confirm=False) -> dict:
+    """A BLTrackFile from whatever nts files the run has in SAM. No
+    completeness check: pot counts the files that exist."""
+    if publish:
+        _require(run_as, confirm)
+    elif run_as not in naming.RUN_AS:
+        raise ToolError(f"run_as must be one of {naming.RUN_AS}, got {run_as!r}")
+    try:
+        resolved = beamfile.resolve_cuts(flavor, cuts)
+    except beamfile.BeamfileError as e:
+        raise ToolError(str(e)) from e
+    if publish:
+        location = location or ("tape" if run_as == "mu2epro" else "scratch")
+        if location not in LOCATIONS:
+            raise ToolError(f"location must be one of {LOCATIONS}, got {location!r}")
+    rec = _load(run_id)
+    out_dir = paths.beamfiles_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_txt = out_dir / f"{run_id}.{flavor}.txt"
+    out_json = out_dir / f"{run_id}.{flavor}.json"
+    if out_txt.exists() or out_json.exists():
+        raise ToolError(f"{out_txt} exists; a beam file is never overwritten (pick another flavor label)")
+    dataset = _dataset(rec)
+    files = bridge.dataset_files(dataset, rec.outloc)
+    if not files:
+        raise ToolError(f"no files in {dataset} at {rec.outloc}: nothing to build a beam file from")
+    present = [f["index"] for f in files]
+    try:
+        stats = beamfile.build([f["path"] for f in files], plane, resolved, out_txt)
+    except beamfile.BeamfileError as e:
+        raise ToolError(str(e)) from e
+    side = {"run_id": run_id, "flavor": flavor, "cuts": resolved, "plane": plane, "path": str(out_txt),
+            "sha256": stats["sha256"], "size": stats["size"], "rows": stats["rows_out"],
+            "rows_in": stats["rows_in"], "dropped": stats["dropped"],
+            "pot": len(files) * rec.events_per_job, "n_files": len(files),
+            "missing_indices": beamfile.missing_indices(present, rec.njobs),
+            "source_files": [f["name"] for f in files], "sam_name": None, "location": None,
+            "created": records.now_utc()}
+    if publish:
+        sam_name = f"etc.{rec.owner}.{rec.tag}Beam-{flavor}.{rec.dsconf}.txt"
+        staged = out_dir / sam_name
+        os.link(out_txt, staged)
+        try:
+            bridge.push_file(staged, location, side["source_files"], run_as, confirm)
+        except Exception as e:
+            out_json.write_text(json.dumps(side, indent=2) + "\n")
+            raise ToolError(f"beam file {out_txt} written but publish failed: {e}") from e
+        side["sam_name"], side["location"] = sam_name, location
+    out_json.write_text(json.dumps(side, indent=2) + "\n")
+    rec.beamfiles.append(side)
+    records.save(rec, paths.runs_dir())
+    return side
 
 
 def get_server_info() -> dict:
