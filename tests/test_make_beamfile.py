@@ -179,21 +179,23 @@ def test_publish_failure_discards_beamfile_and_allows_retry(fake, monkeypatch, b
     assert out["sam_name"] is None and out["location"] is None
 
 
-def test_publish_link_failure_discards_beamfile_and_allows_retry(fake, beamkit_home):
+def test_publish_link_collision_keeps_the_file_it_did_not_create(fake, beamkit_home):
+    """os.link fails because the staged name already exists -- the copy of a
+    beam file published by an earlier call. The unwind discards only what THIS
+    call created, so that file survives."""
     _record()
     bf_dir = beamkit_home / "beamfiles"
     bf_dir.mkdir(parents=True, exist_ok=True)
-    stale = bf_dir / "etc.u.TBeam-bm.e470313.txt"
-    stale.write_text("debris from a prior failed attempt whose unlink was itself swallowed\n")
+    published = bf_dir / "etc.u.TBeam-bm.e470313.txt"
+    published.write_text("the copy published by an earlier make_beamfile call\n")
     with pytest.raises(tools.ToolError, match="discarded"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
     assert fake["push_file"] == []
-    names = {p.name for p in bf_dir.iterdir()} if bf_dir.exists() else set()
-    assert not any(n.endswith(".txt") for n in names)
-    assert not any(n.endswith(".json") for n in names)
+    assert published.read_text() == "the copy published by an earlier make_beamfile call\n"
+    assert {p.name for p in bf_dir.iterdir()} == {"etc.u.TBeam-bm.e470313.txt"}
     rec = records.load("T.e470313", paths.runs_dir())
     assert rec.beamfiles == []
-    # the retry path is no longer blocked by the stale staged link / exists-check
+    # the retry path is not blocked by the pre-existing staged name
     out = tools.make_beamfile("T.e470313", "bm", "self", publish=False)
     assert out["sam_name"] is None and out["location"] is None
 

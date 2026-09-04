@@ -286,20 +286,25 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
     if publish:
         sam_name = f"etc.{rec.owner}.{rec.tag}Beam-{flavor}.{rec.dsconf}.txt"
         staged = out_dir / sam_name
+        linked = False
         try:
             os.link(out_txt, staged)
+            linked = True
             bridge.push_file(staged, location, side["source_files"], run_as, confirm)
         except Exception as e:
-            try:
-                staged.unlink()
-            except OSError:
-                pass
+            # only what THIS call created: an os.link that failed because the
+            # staged name was already there left someone else's file behind it
+            if linked:
+                try:
+                    staged.unlink()
+                except OSError:
+                    pass
             try:
                 out_txt.unlink()
             except OSError:
                 pass
-            raise ToolError(f"beam file discarded: publish failed, so nothing was left behind; "
-                            f"this call can be retried: {e}") from e
+            raise ToolError(f"beam file discarded: publish failed, so this call left nothing new "
+                            f"behind; it can be retried: {e}") from e
         side["sam_name"], side["location"] = sam_name, location
     out_json.write_text(json.dumps(side, indent=2) + "\n")
     rec.beamfiles.append(side)
