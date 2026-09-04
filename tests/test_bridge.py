@@ -95,6 +95,15 @@ def test_push_file_missing_in_prodtools_is_clear_error(fake_prodtools, tmp_path)
         bridge.push_file(tmp_path / "f.txt", "scratch", ["a.root"], "self", False)
 
 
+def test_push_file_available_is_false_when_prodtools_lacks_it(fake_prodtools):
+    assert bridge.push_file_available() is False
+
+
+def test_push_file_available_is_true_when_prodtools_has_it(fake_prodtools):
+    sys.modules["prodtools_mcp_write.tools"].push_file = lambda **kw: {"name": "ok"}
+    assert bridge.push_file_available() is True
+
+
 def test_push_file_present_forwards(fake_prodtools, tmp_path):
     seen = {}
     sys.modules["prodtools_mcp_write.tools"].push_file = lambda **kw: seen.update(kw) or {"name": "ok"}

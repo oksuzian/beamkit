@@ -39,6 +39,14 @@ def tick(run_as, campaign_id, confirm) -> dict:
     return tools.run_submissions(run_as=run_as, campaign_id=campaign_id, confirm=confirm)
 
 
+def push_file_available() -> bool:
+    """Whether this prodtools exposes a push_file tool. The boundary probe:
+    make_beamfile asks before it reads a dataset or builds anything, so a
+    publish=True that cannot possibly succeed costs a second, not hours."""
+    tools = _import("prodtools_mcp_write.tools")
+    return getattr(tools, "push_file", None) is not None
+
+
 def push_file(path, location, parents, run_as, confirm) -> dict:
     tools = _import("prodtools_mcp_write.tools")
     fn = getattr(tools, "push_file", None)

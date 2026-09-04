@@ -228,6 +228,16 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
         location = location or ("tape" if run_as == "mu2epro" else "scratch")
         if location not in LOCATIONS:
             raise ToolError(f"location must be one of {LOCATIONS}, got {location!r}")
+        # knowable now; discovering it in the publish unwind costs hours of
+        # dCache reads and throws the built beam file away
+        try:
+            available = bridge.push_file_available()
+        except bridge.BridgeError as e:
+            raise ToolError(f"make_beamfile(publish=True): {e}") from e
+        if not available:
+            raise ToolError("this prodtools has no push_file tool, so publish=True cannot succeed; "
+                            "make_beamfile works with publish=False only until prodtools-write "
+                            "gains push_file")
     rec = _load(run_id)
     out_dir = paths.beamfiles_dir()
     out_dir.mkdir(parents=True, exist_ok=True)

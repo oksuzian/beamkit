@@ -35,6 +35,7 @@ def fake(monkeypatch):
         calls["push_file"].append(dict(path=str(path), location=location, parents=list(parents), run_as=run_as, confirm=confirm))
         return {"name": Path(path).name}
     monkeypatch.setattr(tools.bridge, "push_file", push_file)
+    monkeypatch.setattr(tools.bridge, "push_file_available", lambda: True)
     return calls
 
 
@@ -106,13 +107,30 @@ def test_publish_bad_location(fake, beamkit_home):
     assert not (beamkit_home / "beamfiles").exists() or not list((beamkit_home / "beamfiles").iterdir())
 
 
-def test_publish_without_push_file_in_prodtools(fake, monkeypatch):
+def test_publish_without_push_file_refused_before_any_read_or_build(fake, monkeypatch, beamkit_home):
+    """The precondition is knowable up front, so it is checked up front: no
+    dataset read, no ana subprocess, nothing written and nothing to discard."""
+    _record()
+    monkeypatch.setattr(tools.bridge, "push_file_available", lambda: False)
+    monkeypatch.setattr(tools.bridge, "dataset_files",
+                        lambda ds, loc: (_ for _ in ()).throw(AssertionError("read the dataset")))
+    monkeypatch.setattr(tools.beamfile, "build",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("built the beam file")))
+    with pytest.raises(tools.ToolError, match="publish=False"):
+        tools.make_beamfile("T.e470313", "bm", "self", publish=True)
+    assert fake["push_file"] == []
+    bf_dir = beamkit_home / "beamfiles"
+    assert not bf_dir.exists() or not list(bf_dir.iterdir())
+
+
+def test_publish_probe_failure_becomes_a_tool_error(fake, monkeypatch):
     _record()
     from beamkit import bridge
-    def missing(*a, **k):
-        raise bridge.BridgeError("this prodtools has no push_file tool; make_beamfile works with publish=False only")
-    monkeypatch.setattr(tools.bridge, "push_file", missing)
-    with pytest.raises(tools.ToolError, match="publish=False"):
+    monkeypatch.setattr(tools.bridge, "push_file_available",
+                        lambda: (_ for _ in ()).throw(bridge.BridgeError("prodtools is not importable here")))
+    monkeypatch.setattr(tools.bridge, "dataset_files",
+                        lambda ds, loc: (_ for _ in ()).throw(AssertionError("read the dataset")))
+    with pytest.raises(tools.ToolError, match="not importable"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
 
 
