@@ -87,6 +87,11 @@ Everything lives under `BEAMKIT_HOME` (default
 
 `run_as` is required on every mutating tool and passed through
 unchanged: beamkit adds no gate of its own and removes none.
+`make_beamfile(publish=True)` additionally requires `run_as` to match
+the run's own: the beam file is named from the record's owner and pushed
+as `run_as`, so a mismatch would publish one identity's name under the
+other account.
+
 `run_as="self"` writes only your own scratch, datasets and ledger — no
 prompt. `run_as="mu2epro"` writes production SAM and submits
 production grid jobs; it is refused unless `confirm=true`, both here

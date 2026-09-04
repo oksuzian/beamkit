@@ -99,6 +99,31 @@ def test_publish_mu2epro_defaults_tape_needs_confirm(fake):
     assert out["location"] == "tape" and out["sam_name"] == "etc.mu2e.TBeam-bm.e470313.txt"
 
 
+def test_publish_as_mu2epro_from_a_self_run_refused(fake, beamkit_home):
+    _record(run_as="self", owner="u")
+    with pytest.raises(tools.ToolError, match="run_as='self'.*run_as='mu2epro'"):
+        tools.make_beamfile("T.e470313", "bm", "mu2epro", publish=True, confirm=True)
+    assert fake["push_file"] == []
+    bf_dir = beamkit_home / "beamfiles"
+    assert not bf_dir.exists() or not list(bf_dir.iterdir())
+
+
+def test_publish_as_self_from_a_mu2epro_run_refused(fake, beamkit_home):
+    _record(run_as="mu2epro", owner="mu2e")
+    with pytest.raises(tools.ToolError, match="run_as='mu2epro'.*run_as='self'"):
+        tools.make_beamfile("T.e470313", "bm", "self", publish=True)
+    assert fake["push_file"] == []
+    bf_dir = beamkit_home / "beamfiles"
+    assert not bf_dir.exists() or not list(bf_dir.iterdir())
+
+
+def test_build_without_publish_ignores_the_identity(fake):
+    """No push, no pushing identity to disagree with: a read-only build of a
+    mu2epro run under your own account stays allowed."""
+    _record(run_as="mu2epro", owner="mu2e")
+    assert tools.make_beamfile("T.e470313", "bm", "self")["sam_name"] is None
+
+
 def test_publish_bad_location(fake, beamkit_home):
     _record()
     with pytest.raises(tools.ToolError, match="location"):

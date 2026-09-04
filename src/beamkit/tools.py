@@ -239,6 +239,12 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
                             "make_beamfile works with publish=False only until prodtools-write "
                             "gains push_file")
     rec = _load(run_id)
+    # the file is NAMED from the record's identity and PUSHED as run_as; a
+    # mismatch publishes one owner's name under the other account
+    if publish and run_as != rec.run_as:
+        raise ToolError(f"run {run_id} was created with run_as={rec.run_as!r}, so its beam file is "
+                        f"named etc.{rec.owner}.…; publishing it as run_as={run_as!r} would push "
+                        f"that name under the other identity. Pass run_as={rec.run_as!r}")
     out_dir = paths.beamfiles_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     out_txt = out_dir / f"{run_id}.{flavor}.txt"
