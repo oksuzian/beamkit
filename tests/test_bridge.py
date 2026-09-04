@@ -65,6 +65,18 @@ def test_push_cnf_forwards_as_keywords(fake_prodtools, tmp_path):
                                           "slice_size": 3, "run_as": "self", "confirm": False}
 
 
+def test_push_cnf_forwards_dev_dir_when_set(fake_prodtools, tmp_path, monkeypatch):
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
+    bridge.push_cnf(tmp_path / "e.json", "T", "d", 1, "self", False)
+    assert fake_prodtools["push_cnf"]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
+
+
+def test_push_cnf_omits_dev_dir_when_unset(fake_prodtools, tmp_path, monkeypatch):
+    monkeypatch.delenv("BEAMKIT_PRODTOOLS_DIR", raising=False)
+    bridge.push_cnf(tmp_path / "e.json", "T", "d", 1, "self", False)
+    assert "prodtools_dir" not in fake_prodtools["push_cnf"]
+
+
 def test_tick_forwards(fake_prodtools):
     out = bridge.tick("mu2epro", 7, True)
     assert out["rc"] == 0
@@ -121,11 +133,11 @@ def test_prodtools_info_reports_root_and_commit(fake_prodtools, tmp_path):
     subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
                     "commit", "-q", "--allow-empty", "-m", "x"], check=True)
     info = bridge.prodtools_info()
-    assert info["root"] == str(tmp_path) and len(info["commit"]) == 40
+    assert info["root"] == str(tmp_path) and len(info["commit"]) == 40 and info["dev_dir"] is None
 
 
 def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path, monkeypatch):
     def raise_missing(*a, **k):
         raise FileNotFoundError("git")
     monkeypatch.setattr(bridge.subprocess, "run", raise_missing)
-    assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None}
+    assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None, "dev_dir": None}

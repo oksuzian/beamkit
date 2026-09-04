@@ -35,7 +35,7 @@ def fake_bridge(monkeypatch, deck):
     monkeypatch.setattr(tools.bridge, "push_cnf", push_cnf)
     monkeypatch.setattr(tools.bridge, "tick", tick)
     monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
-    monkeypatch.setattr(tools.bridge, "prodtools_info", lambda: {"root": "/pt", "commit": "c" * 40})
+    monkeypatch.setattr(tools.bridge, "prodtools_info", lambda: {"root": "/pt", "commit": "c" * 40, "dev_dir": None})
     monkeypatch.setattr(tools.bridge, "campaign_status", lambda campaign_id, mine: {"campaign_id": campaign_id, "mine": mine})
     monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: [{"name": f"{ds[:-5]}.00000000.root", "index": 0, "size": 1, "path": f"/pnfs/{loc}/x"}])
     from beamkit import decks
@@ -65,7 +65,7 @@ def test_run_beamline_happy_path(fake_bridge, beamkit_home):
     assert entry["g4bl_dir"] == out["deck"]["dir"] and entry["njobs"] == 3
     saved = records.load("T.e470313", paths.runs_dir())
     assert saved.ticks[0]["rc"] == 0 and saved.ticks[0]["summary"].endswith("top-up: 1 slice")
-    assert saved.prodtools == {"root": "/pt", "commit": "c" * 40}
+    assert saved.prodtools == {"root": "/pt", "commit": "c" * 40, "dev_dir": None}
 
 
 def test_run_beamline_params_reach_entry(fake_bridge, beamkit_home):
@@ -217,6 +217,7 @@ def test_beamline_outputs(fake_bridge):
 def test_get_server_info(fake_bridge, beamkit_home):
     info = tools.get_server_info()
     assert info["name"] == "beamkit" and info["prodtools"]["commit"] == "c" * 40
+    assert info["prodtools"]["dev_dir"] is None
     assert info["records_dir"] == str(beamkit_home / "runs") and info["slice_max"] == 10000
 
 
