@@ -2,8 +2,8 @@
 so the rest of beamkit, and every unit test, runs with prodtools absent.
 
 Wraps prodtools' own MCP tool functions in-process (their gates included)
-plus three read-only helpers from prodtools utils. No shelling out, no
-ledger access."""
+plus three read-only helpers from prodtools utils. The only subprocess
+here is `git rev-parse` in prodtools_info; no ledger access."""
 import subprocess
 
 _HINT = ("prodtools is not importable here. Start beamkit through "
@@ -65,6 +65,9 @@ def dataset_files(dataset, location) -> list[dict]:
     out = []
     for name in sizes:
         n = jc.Mu2eName.parse(name)
+        if not n.sequencer.isdigit():
+            raise BridgeError(f"{name}: sequencer {n.sequencer!r} is not a plain job index; "
+                              f"beamkit reads only %08d-indexed g4bl outputs")
         out.append({"name": name, "index": int(n.sequencer), "size": sizes[name],
                     "path": f"{root}/{n.relpathname()}"})
     return sorted(out, key=lambda f: f["index"])
@@ -73,6 +76,10 @@ def dataset_files(dataset, location) -> list[dict]:
 def prodtools_info() -> dict:
     runner = _import("prodtools_mcp_write.runner")
     root = runner.REPO_ROOT
-    proc = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True,
-                          text=True, stdin=subprocess.DEVNULL)
-    return {"root": root, "commit": proc.stdout.strip() if proc.returncode == 0 else None}
+    try:
+        proc = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL)
+        commit = proc.stdout.strip() if proc.returncode == 0 else None
+    except OSError:
+        commit = None
+    return {"root": root, "commit": commit}

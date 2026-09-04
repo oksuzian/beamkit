@@ -108,6 +108,13 @@ def test_dataset_files_unknown_location(fake_prodtools):
         bridge.dataset_files("nts.u.T.e470313.root", "resilient")
 
 
+def test_dataset_files_refuses_composite_sequencer(fake_prodtools, monkeypatch):
+    monkeypatch.setattr(sys.modules["utils.samweb_wrapper"], "file_sizes_in_dataset",
+                        lambda ds: {"nts.u.T.e470313.001430_00000052.root": 5})
+    with pytest.raises(bridge.BridgeError, match="001430_00000052"):
+        bridge.dataset_files("nts.u.T.e470313.root", "scratch")
+
+
 def test_prodtools_info_reports_root_and_commit(fake_prodtools, tmp_path):
     import subprocess
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
@@ -115,3 +122,10 @@ def test_prodtools_info_reports_root_and_commit(fake_prodtools, tmp_path):
                     "commit", "-q", "--allow-empty", "-m", "x"], check=True)
     info = bridge.prodtools_info()
     assert info["root"] == str(tmp_path) and len(info["commit"]) == 40
+
+
+def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path, monkeypatch):
+    def raise_missing(*a, **k):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(bridge.subprocess, "run", raise_missing)
+    assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None}
