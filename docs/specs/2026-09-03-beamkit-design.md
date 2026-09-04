@@ -177,7 +177,7 @@ hand in 2013 — so a later run can resample from it:
    interpreter rule surrokit documents). Apply two layers of cuts:
 
    **Structural cuts, always on, not parameters** (they make the file a
-   valid g4bl source, not a physics choice): `Pz > 0`; `PDGid <= 1e6`
+   valid g4bl source, not a physics choice): `Pz >= 0` (MakeSource.py skips `Pz < 0`); `PDGid <= 1e6`
    (g4bl cannot source exotics); drop a row whose (EventID, TrackID)
    repeats the previous row; TrackID written as 1 (g4bl warns on large
    TrackIDs), original TrackID kept in the trailing column.
