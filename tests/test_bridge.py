@@ -13,7 +13,8 @@ def fake_prodtools(monkeypatch, tmp_path):
     tools = types.ModuleType("prodtools_mcp_write.tools")
     def push_cnf(**kw):
         calls["push_cnf"] = kw
-        return {"tarball": "cnf.u.T.e470313.0.tar", "datasets": ["nts.u.T.e470313.root"], "campaign_id": 7, "njobs": 3}
+        # the real push_cnf echoes the entry's outloc key, a glob, not a dataset name
+        return {"tarball": "cnf.u.T.e470313.0.tar", "datasets": ["nts.*.root"], "campaign_id": 7, "njobs": 3}
     def run_submissions(**kw):
         calls["run_submissions"] = kw
         return {"rc": 0, "needs_attention": False, "campaign_id": kw["campaign_id"], "output": "tick ok"}

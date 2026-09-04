@@ -128,7 +128,10 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
         records.save(rec, runs_dir)
         raise ToolError(f"run {run_id}: push_cnf failed ({e})"
                         f"{_dsconf_after_failed_push(owner, tag, dsconf)}") from e
-    rec.campaign_id, rec.tarball, rec.datasets = pushed["campaign_id"], pushed["tarball"], list(pushed["datasets"])
+    rec.campaign_id, rec.tarball = pushed["campaign_id"], pushed["tarball"]
+    # prodtools echoes the entry's outloc key ("nts.*.root"), a glob, not a name;
+    # the dataset this run actually writes is the one _dataset composes.
+    rec.datasets, rec.prodtools_datasets = [_dataset(rec)], list(pushed["datasets"])
     records.save(rec, runs_dir)
     if submit:
         _tick_into(rec, run_as, confirm, runs_dir,

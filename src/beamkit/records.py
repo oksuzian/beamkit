@@ -33,7 +33,8 @@ class RunRecord:
     state: str
     campaign_id: int | None = None
     tarball: str | None = None
-    datasets: list = field(default_factory=list)
+    datasets: list = field(default_factory=list)          # resolved nts.<owner>.<desc>.<dsconf>.root
+    prodtools_datasets: list = field(default_factory=list)  # prodtools' raw return: the outloc glob
     created: str = ""
     ticks: list = field(default_factory=list)
     prodtools: dict = field(default_factory=dict)

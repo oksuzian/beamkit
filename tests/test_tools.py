@@ -24,7 +24,8 @@ def fake_bridge(monkeypatch, deck):
     def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm):
         calls["push_cnf"].append(dict(json_path=str(json_path), desc=desc, dsconf=dsconf,
                                       slice_size=slice_size, run_as=run_as, confirm=confirm))
-        return {"tarball": f"cnf.u.{desc}.{dsconf}.0.tar", "datasets": [f"nts.u.{desc}.{dsconf}.root"],
+        # exactly what prodtools returns: the entry's outloc key, a glob
+        return {"tarball": f"cnf.u.{desc}.{dsconf}.0.tar", "datasets": ["nts.*.root"],
                 "campaign_id": 7, "njobs": 3}
     def tick(run_as, campaign_id, confirm):
         calls["tick"].append(dict(run_as=run_as, campaign_id=campaign_id, confirm=confirm))
@@ -56,6 +57,7 @@ def test_run_beamline_happy_path(fake_bridge, beamkit_home):
     assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["campaign_id"] == 7
     assert out["dsconf"] == "e470313" and out["owner"] == "u" and out["slice_size"] == 3
     assert out["deck"]["sha"] == SHA and out["deck"]["pinned"] is True
+    assert out["datasets"] == ["nts.u.T.e470313.root"] and out["prodtools_datasets"] == ["nts.*.root"]
     assert fake_bridge["cnf_exists"] == ["cnf.u.T.e470313.0.tar"]
     entry_path = beamkit_home / "runs" / "T.e470313" / "entry.json"
     assert fake_bridge["push_cnf"] == [dict(json_path=str(entry_path), desc="T", dsconf="e470313",
@@ -66,6 +68,17 @@ def test_run_beamline_happy_path(fake_bridge, beamkit_home):
     saved = records.load("T.e470313", paths.runs_dir())
     assert saved.ticks[0]["rc"] == 0 and saved.ticks[0]["summary"].endswith("top-up: 1 slice")
     assert saved.prodtools == {"root": "/pt", "commit": "c" * 40, "dev_dir": None}
+
+
+def test_datasets_is_the_resolved_name_not_the_glob(fake_bridge):
+    """prodtools copies the entry's outloc key into outputs[].dataset and
+    returns it, so its `datasets` is "nts.*.root" and never a name. The
+    record must carry the dataset the run really writes."""
+    out = _run(run_as="mu2epro", confirm=True)
+    assert out["datasets"] == ["nts.mu2e.T.e470313.root"]
+    assert out["prodtools_datasets"] == ["nts.*.root"]
+    saved = records.load("T.e470313", paths.runs_dir())
+    assert saved.datasets == ["nts.mu2e.T.e470313.root"] and saved.prodtools_datasets == ["nts.*.root"]
 
 
 def test_run_beamline_params_reach_entry(fake_bridge, beamkit_home):
