@@ -91,15 +91,79 @@ def test_submit_false_creates_only(fake_bridge):
     assert out["state"] == "created" and out["campaign_id"] == 7 and fake_bridge["tick"] == []
 
 
-def test_push_fails_burns_dsconf_and_records(fake_bridge, monkeypatch):
+def test_push_fails_before_sam_reports_the_dsconf_free(fake_bridge, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("json2jobdef --prod --enqueue failed (rc=1)")
     monkeypatch.setattr(tools.bridge, "push_cnf", boom)
-    with pytest.raises(tools.ToolError, match="burned"):
+    with pytest.raises(tools.ToolError, match="is not in SAM.*is free"):
         _run()
     rec = records.load("T.e470313", paths.runs_dir())
     assert rec.state == "enqueue_failed" and rec.campaign_id is None and "rc=1" in rec.error
     assert fake_bridge["tick"] == []
+
+
+def test_push_fails_after_sam_reports_the_dsconf_burned(fake_bridge, monkeypatch):
+    seen = []
+    def cnf_exists(name):
+        seen.append(name)
+        return len(seen) > 1  # free when allocated, in SAM when probed after the failure
+    monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
+    monkeypatch.setattr(tools.bridge, "push_cnf",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rc=1 after the push")))
+    with pytest.raises(tools.ToolError, match="is in SAM.*burned"):
+        _run()
+    assert seen == ["cnf.u.T.e470313.0.tar", "cnf.u.T.e470313.0.tar"]
+
+
+def test_push_fails_and_sam_probe_fails_says_so(fake_bridge, monkeypatch):
+    from beamkit import bridge as _bridge
+    seen = []
+    def cnf_exists(name):
+        seen.append(name)
+        if len(seen) > 1:
+            raise _bridge.BridgeError("samweb down")
+        return False
+    monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
+    monkeypatch.setattr(tools.bridge, "push_cnf",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rc=1")))
+    with pytest.raises(tools.ToolError, match="could not be determined.*samweb down"):
+        _run()
+
+
+def test_retry_after_failed_push_reuses_the_run_dir(fake_bridge, monkeypatch):
+    """The push failed before SAM, so the dsconf is free and re-allocated; the
+    leftover enqueue_failed run dir must not be what refuses the retry."""
+    good = tools.bridge.push_cnf
+    state = {"fail": True}
+    def flaky(*a, **k):
+        if state["fail"]:
+            raise RuntimeError("push_cnf refused prodtools_dir for run_as='mu2epro'")
+        return good(*a, **k)
+    monkeypatch.setattr(tools.bridge, "push_cnf", flaky)
+    with pytest.raises(tools.ToolError, match="is free"):
+        _run()
+    assert records.load("T.e470313", paths.runs_dir()).state == "enqueue_failed"
+    state["fail"] = False
+    out = _run()
+    assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["campaign_id"] == 7
+
+
+def test_retry_refused_once_a_campaign_exists(fake_bridge):
+    _run(submit=False)
+    with pytest.raises(tools.ToolError, match="never reused"):
+        _run()
+
+
+def test_mu2epro_with_dev_prodtools_dir_refused_before_any_side_effect(fake_bridge, monkeypatch, beamkit_home):
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
+    with pytest.raises(tools.ToolError, match="BEAMKIT_PRODTOOLS_DIR"):
+        _run(run_as="mu2epro", confirm=True)
+    assert fake_bridge["cnf_exists"] == [] and not (beamkit_home / "runs").exists()
+
+
+def test_self_run_still_accepts_dev_prodtools_dir(fake_bridge, monkeypatch):
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
+    assert _run()["state"] == "submitted"
 
 
 def test_tick_fails_leaves_recoverable_record(fake_bridge, monkeypatch):

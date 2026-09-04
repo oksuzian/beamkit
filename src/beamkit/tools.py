@@ -19,6 +19,11 @@ def _require(run_as, confirm):
     refused mu2epro call burns no dsconf and writes no record."""
     if run_as not in naming.RUN_AS:
         raise ToolError(f"run_as must be one of {naming.RUN_AS}, got {run_as!r}")
+    if run_as == "mu2epro" and os.environ.get("BEAMKIT_PRODTOOLS_DIR"):
+        raise ToolError("BEAMKIT_PRODTOOLS_DIR is set, which ships that checkout to the workers; "
+                        "prodtools refuses a dev prodtools_dir for run_as='mu2epro' outright. A "
+                        "production run uses a published cvmfs prodtools release only: unset "
+                        "BEAMKIT_PRODTOOLS_DIR")
     if run_as == "mu2epro" and not confirm:
         raise ToolError("run_as='mu2epro' registers artifacts in production SAM and submits "
                         "production grid jobs; pass confirm=True")
@@ -56,6 +61,34 @@ def _pin(deck_ref, deck_dir, deck_url, run_as):
         raise ToolError(str(e)) from e
 
 
+def _is_retryable_run_dir(run_id, runs_dir) -> bool:
+    """A run dir left by a push that never reached prodtools: state
+    'enqueue_failed' with no campaign. Nothing was created anywhere else, so
+    the retry overwrites it in place. Any other run dir stays refused."""
+    try:
+        rec = records.load(run_id, runs_dir)
+    except records.RecordError:
+        return False
+    return rec.state == "enqueue_failed" and rec.campaign_id is None
+
+
+def _dsconf_after_failed_push(owner, tag, dsconf) -> str:
+    """Whether the cnf actually reached SAM decides whether the dsconf is
+    burned; a push that failed before the SAM write leaves it free, and the
+    retry reuses it. Never claim one without asking."""
+    name = naming.cnf_name(owner, tag, dsconf)
+    try:
+        landed = bridge.cnf_exists(name)
+    except Exception as e:
+        return (f"; whether {name} reached SAM could not be determined "
+                f"({type(e).__name__}: {e}), so check SAM before retrying")
+    if landed:
+        return (f"; {name} is in SAM, so the dsconf {dsconf!r} is burned and the next call "
+                f"allocates the next suffix")
+    return (f"; {name} is not in SAM, so the dsconf {dsconf!r} is free and this call can be "
+            f"retried once the cause is fixed")
+
+
 def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=1000, njobs=1,
                  main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None,
                  submit=True, confirm=False, deck_dir=None, deck_url=DEFAULT_DECK_URL) -> dict:
@@ -78,9 +111,9 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     run_id = f"{tag}.{dsconf}"
     runs_dir = paths.runs_dir()
     rdir = records.run_dir(runs_dir, run_id)
-    if rdir.exists():
+    if rdir.exists() and not _is_retryable_run_dir(run_id, runs_dir):
         raise ToolError(f"run dir {rdir} already exists; a run id is never reused")
-    rdir.mkdir(parents=True)
+    rdir.mkdir(parents=True, exist_ok=True)
     entry_path = compose.write_entry_json(entry, rdir / "entry.json")
     rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=owner, run_as=run_as,
                             deck=pin.as_record(), params=params, events_per_job=events_per_job,
@@ -93,8 +126,8 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     except Exception as e:
         rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
         records.save(rec, runs_dir)
-        raise ToolError(f"run {run_id}: push_cnf failed and the dsconf {dsconf!r} is burned "
-                        f"(the next call allocates the next suffix): {e}") from e
+        raise ToolError(f"run {run_id}: push_cnf failed ({e})"
+                        f"{_dsconf_after_failed_push(owner, tag, dsconf)}") from e
     rec.campaign_id, rec.tarball, rec.datasets = pushed["campaign_id"], pushed["tarball"], list(pushed["datasets"])
     records.save(rec, runs_dir)
     if submit:
