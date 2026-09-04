@@ -147,15 +147,22 @@ def write_rows(out_path, rows: Iterable[Row], cuts: dict) -> dict:
             rows_in += 1
             yield r
 
-    with open(part, "w") as fh:
-        for h in HEADER:
-            fh.write(h)
-            sha.update(h.encode())
-        for r in filter_rows(counted(rows), cuts, drops):
-            line = format_row(r)
-            fh.write(line)
-            sha.update(line.encode())
-            rows_out += 1
+    try:
+        with open(part, "w") as fh:
+            for h in HEADER:
+                fh.write(h)
+                sha.update(h.encode())
+            for r in filter_rows(counted(rows), cuts, drops):
+                line = format_row(r)
+                fh.write(line)
+                sha.update(line.encode())
+                rows_out += 1
+    except BaseException:
+        try:
+            os.unlink(part)
+        except OSError:
+            pass
+        raise
     os.replace(part, out_path)
     return {"rows_in": rows_in, "rows_out": rows_out, "dropped": drops,
             "sha256": sha.hexdigest(), "size": out_path.stat().st_size}

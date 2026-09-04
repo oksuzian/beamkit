@@ -126,6 +126,18 @@ def test_write_rows_stats_and_sha(tmp_path):
     assert not (tmp_path / "b.txt.part").exists()
 
 
+def test_write_rows_mid_stream_error_leaves_no_part(tmp_path):
+    def bad_rows():
+        yield R(2212, ev=1)
+        raise beamfile.BeamfileError("reader died")
+
+    out = tmp_path / "b.txt"
+    with pytest.raises(beamfile.BeamfileError, match="reader died"):
+        beamfile.write_rows(out, bad_rows(), BM)
+    assert not out.exists()
+    assert not (tmp_path / "b.txt.part").exists()
+
+
 def test_write_rows_refuses_existing(tmp_path):
     out = tmp_path / "b.txt"
     out.write_text("x")
