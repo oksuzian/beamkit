@@ -48,8 +48,8 @@ with this personal checkout's absolute paths.
 | `make_recoveries(run_id, run_as, confirm=False)` | one prodtools tick: verify finished jobs, resubmit the missing indices, and submit any slice of this run not yet submitted (`njobs > 10000` only). Nothing advances on its own; a run with no failures never needs this call. **Ledger-wide:** prodtools scopes only the top-up to the campaign — the verify/recovery pass covers every active campaign in the caller's ledger, so under `run_as="mu2epro"` it recovers production campaigns too. | `run_submissions(campaign_id=...)` |
 | `beamline_status(run_id)` | run record merged with live campaign state (queue, outputs); `mine=True` for self runs | `campaign_status` |
 | `list_beamline_runs(state=None)` | run records under the caller's beamkit dir, newest first | — |
-| `beamline_outputs(run_id)` | files of `nts.<owner>.<desc>.<dsconf>.root` with sizes and dCache paths | `find_datasets`, `dataset_details` |
-| `make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=False, location=None, confirm=False)` | build a BLTrackFile beam file from a run's ntuples with a preset or caller-supplied cut table; optionally publish it to SAM with the ntuples as parents | `find_datasets`/`dataset_details` (inputs); `push_file` when `publish=True` |
+| `beamline_outputs(run_id)` | files of `nts.<owner>.<desc>.<dsconf>.root` with sizes and dCache paths | `utils.samweb_wrapper.file_sizes_in_dataset`, `utils.file_resolver.dataset_dir`, `utils.job_common.Mu2eName` |
+| `make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=False, location=None, confirm=False)` | build a BLTrackFile beam file from a run's ntuples with a preset or caller-supplied cut table; optionally publish it to SAM with the ntuples as parents | `utils.samweb_wrapper.file_sizes_in_dataset` / `utils.file_resolver.dataset_dir` (inputs); `push_file` when `publish=True` |
 | `get_server_info()` | beamkit version, prodtools root and commit, venv python, deck cache dir, records dir, beamfiles dir | — |
 
 `run_beamline` also takes `deck_url` (default the `Mu2e/G4BeamlineScripts`
