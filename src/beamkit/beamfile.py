@@ -104,7 +104,7 @@ def filter_rows(rows: Iterable[Row], cuts: dict, drops: dict) -> Iterator[Row]:
     minp = cuts["min_p_mev"]
     last = None
     for r in rows:
-        if last is not None and r == last:
+        if last is not None and (r.EventID, r.TrackID) == last:
             drops["duplicate"] += 1
             continue
         if r.PDGid > EXOTIC_ABOVE:
@@ -124,7 +124,7 @@ def filter_rows(rows: Iterable[Row], cuts: dict, drops: dict) -> Iterator[Row]:
             drops["pz_negative"] += 1
             continue
         yield r
-        last = r
+        last = (r.EventID, r.TrackID)
 
 
 def format_row(r: Row) -> str:

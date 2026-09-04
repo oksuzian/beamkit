@@ -69,12 +69,12 @@ def test_resolve_custom_ok():
 
 
 def test_structural_exotic_dropped():
-    kept, drops = _keep([R(1000010020), R(2212)], NOCUT)
+    kept, drops = _keep([R(1000010020, ev=1), R(2212, ev=2)], NOCUT)
     assert [r.PDGid for r in kept] == [2212] and drops["exotic"] == 1
 
 
 def test_structural_pz_negative_dropped_zero_kept():
-    kept, drops = _keep([R(2212, pz=-0.5), R(2212, pz=0.0), R(2212, pz=2.0)], NOCUT)
+    kept, drops = _keep([R(2212, pz=-0.5, ev=1), R(2212, pz=0.0, ev=2), R(2212, pz=2.0, ev=3)], NOCUT)
     assert [r.Pz for r in kept] == [0.0, 2.0] and drops["pz_negative"] == 1
 
 
@@ -87,7 +87,8 @@ def test_duplicate_is_against_last_written_row():
 
 
 def test_bm_cuts_momentum_floor():
-    rows = [R(22, pz=0.5), R(22, pz=1.5), R(11, pz=9.9), R(-11, pz=10.1), R(2112), R(-13, pz=5.0)]
+    rows = [R(22, pz=0.5, ev=1), R(22, pz=1.5, ev=2), R(11, pz=9.9, ev=3), R(-11, pz=10.1, ev=4),
+            R(2112, ev=5), R(-13, pz=5.0, ev=6)]
     kept, drops = _keep(rows, BM)
     assert [r.PDGid for r in kept] == [22, -11, -13]
     assert drops == {"duplicate": 0, "exotic": 0, "keep_pdg": 0, "drop_pdg": 1, "min_p_mev": 2, "pz_negative": 0}
@@ -100,7 +101,7 @@ def test_momentum_is_magnitude():
 
 
 def test_ps_keeps_only_neutrons():
-    kept, drops = _keep([R(2112), R(2212), R(22)], PS)
+    kept, drops = _keep([R(2112, ev=1), R(2212, ev=2), R(22, ev=3)], PS)
     assert [r.PDGid for r in kept] == [2112] and drops["keep_pdg"] == 2
 
 
