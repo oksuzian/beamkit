@@ -222,9 +222,6 @@ def beamline_outputs(run_id) -> dict:
             "n_files": len(files), "total_size": sum(f["size"] for f in files), "files": files}
 
 
-LOCATIONS = ("scratch", "disk", "tape")
-
-
 def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=False,
                   location=None, confirm=False) -> dict:
     """A BLTrackFile from whatever nts files the run has in SAM. No
@@ -239,8 +236,8 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
         raise ToolError(str(e)) from e
     if publish:
         location = location or ("tape" if run_as == "mu2epro" else "scratch")
-        if location not in LOCATIONS:
-            raise ToolError(f"location must be one of {LOCATIONS}, got {location!r}")
+        if location not in compose.OUTLOCS:
+            raise ToolError(f"location must be one of {compose.OUTLOCS}, got {location!r}")
         # knowable now; discovering it in the publish unwind costs hours of
         # dCache reads and throws the built beam file away
         try:
