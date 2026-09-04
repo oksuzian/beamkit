@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "beamkit": {
+      "command": "/exp/mu2e/app/users/oksuzian/beamkit/scripts/start_mcp.sh",
+      "env": {"BEAMKIT_PRODTOOLS_ROOT": "/exp/mu2e/app/users/oksuzian/muse_050125/prodtools"}
+    }
+  }
+}
