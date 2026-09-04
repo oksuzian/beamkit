@@ -75,6 +75,15 @@ def _resolve_default(node):
     return ("name", ast.dump(node))
 
 
+# A wrapper parameter is "promoted" when tools.py defaults it but the
+# wrapper requires it. Only this one is intentional: run_beamline's
+# run_as is required at the MCP boundary on purpose, because an omitted
+# run_as silently defaulting to "self" is exactly the kind of mistake
+# that looks like it worked. Any other promotion is undeclared drift,
+# not a design choice, and must fail loudly.
+ALLOWED_PROMOTIONS = {("run_beamline", "run_as")}
+
+
 def test_wrapper_signatures_match_tools():
     """The @mcp.tool closures inside create_mcp_server are hand-written, not
     generated from TOOL_FUNCTIONS - they are the only interface an MCP
@@ -85,12 +94,14 @@ def test_wrapper_signatures_match_tools():
     each @mcp.tool(name=...) wrapper against inspect.signature(tools.<name>):
     same parameter names, a wrapper is never looser than the real function
     (never defaults something the real function requires), matching default
-    values where both sides default a parameter, and matching order once
-    parameters the wrapper *promotes* to required (real function defaults
-    them, the wrapper does not - e.g. run_as on run_beamline, required at
-    the MCP boundary by design) are set aside, since Python's own
-    required-before-optional rule is what moves those earlier in the
-    wrapper's parameter list."""
+    values where both sides default a parameter, and matching order - except
+    for the (tool, parameter) pairs listed in ALLOWED_PROMOTIONS, where the
+    wrapper deliberately drops a default tools.py provides, making that
+    parameter required at the MCP boundary. Only an allowlisted pair may
+    drop a default; any other parameter that loses its default is treated as
+    drift and fails the test by name. An allowlisted parameter is also
+    excluded from the order check, since Python's own required-before-
+    optional rule is what moves it earlier in the wrapper's parameter list."""
     wrappers = _wrapper_functions()
     assert set(wrappers) == set(server.TOOL_NAMES), \
         f"@mcp.tool names {sorted(wrappers)} != TOOL_NAMES {sorted(server.TOOL_NAMES)}"
@@ -113,6 +124,11 @@ def test_wrapper_signatures_match_tools():
                     f"tools.{name} requires {pname!r}")
                 continue
             if not has_default:
+                assert (name, pname) in ALLOWED_PROMOTIONS, (
+                    f"{name}: wrapper drops the default for {pname!r}, but "
+                    f"tools.{name} defaults it — this makes {pname!r} required "
+                    f"at the MCP boundary; if intentional, add "
+                    f"({name!r}, {pname!r}) to ALLOWED_PROMOTIONS")
                 promoted.add(pname)
                 continue
             wrapper_val = _resolve_default(default_node)
