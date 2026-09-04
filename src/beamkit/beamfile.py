@@ -211,21 +211,3 @@ def iter_plane_rows(paths, plane, python=None) -> Iterator[Row]:
 
 def build(paths, plane, cuts, out_path, python=None) -> dict:
     return write_rows(out_path, iter_plane_rows(paths, plane, python), cuts)
-
-
-def split_chunks(src_txt, njobs, out_dir) -> list[Path]:
-    """Contiguous split of a beam file's data rows into njobs chunk files,
-    each with the three header lines. Stage-2 (gated) uses these."""
-    lines = Path(src_txt).read_text().splitlines(keepends=True)
-    header, data = lines[:3], lines[3:]
-    if header != list(HEADER):
-        raise BeamfileError(f"{src_txt} does not start with the BLTrackFile header")
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    per = math.ceil(len(data) / njobs) if data else 0
-    paths = []
-    for i in range(njobs):
-        p = out_dir / f"chunk_{i}.txt"
-        p.write_text("".join(header) + "".join(data[i * per:(i + 1) * per]))
-        paths.append(p)
-    return paths

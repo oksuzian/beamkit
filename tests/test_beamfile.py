@@ -148,17 +148,3 @@ def test_write_rows_refuses_existing(tmp_path):
 def test_missing_indices():
     assert beamfile.missing_indices([0, 2, 3], 5) == [1, 4]
     assert beamfile.missing_indices([0, 1, 2], 3) == []
-
-
-def test_split_chunks_conserves_rows_and_order(tmp_path):
-    src = tmp_path / "b.txt"
-    beamfile.write_rows(src, [R(2212, ev=i) for i in range(1, 11)], NOCUT)
-    chunks = beamfile.split_chunks(src, 3, tmp_path / "chunks")
-    assert [c.name for c in chunks] == ["chunk_0.txt", "chunk_1.txt", "chunk_2.txt"]
-    data = []
-    for c in chunks:
-        lines = c.read_text().splitlines()
-        assert lines[:3] == [h.rstrip("\n") for h in beamfile.HEADER]
-        data += lines[3:]
-    assert [int(l.split()[8]) for l in data] == list(range(1, 11))
-    assert [len(c.read_text().splitlines()) - 3 for c in chunks] == [4, 4, 2]
