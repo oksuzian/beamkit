@@ -77,6 +77,12 @@ def test_push_cnf_omits_dev_dir_when_unset(fake_prodtools, tmp_path, monkeypatch
     assert "prodtools_dir" not in fake_prodtools["push_cnf"]
 
 
+def test_push_cnf_omits_dev_dir_when_empty(fake_prodtools, tmp_path, monkeypatch):
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "")
+    bridge.push_cnf(tmp_path / "e.json", "T", "d", 1, "self", False)
+    assert "prodtools_dir" not in fake_prodtools["push_cnf"]
+
+
 def test_tick_forwards(fake_prodtools):
     out = bridge.tick("mu2epro", 7, True)
     assert out["rc"] == 0
@@ -141,3 +147,8 @@ def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path
         raise FileNotFoundError("git")
     monkeypatch.setattr(bridge.subprocess, "run", raise_missing)
     assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None, "dev_dir": None}
+
+
+def test_prodtools_info_empty_env_reports_none(fake_prodtools, monkeypatch):
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "")
+    assert bridge.prodtools_info()["dev_dir"] is None
