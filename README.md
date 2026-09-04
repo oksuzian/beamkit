@@ -44,7 +44,7 @@ with this personal checkout's absolute paths.
 
 | tool | does | prodtools calls |
 |---|---|---|
-| `run_beamline(tag, deck_ref, run_as, params={}, events_per_job=1000, njobs=1, main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None, submit=True, confirm=False, deck_dir=None)` | materialize deck, allocate dsconf, write `entry.json` + `run.json`, create the campaign, and (if `submit`) fire the first tick, which submits the whole run when `njobs <= 10000` | `push_cnf`, then `run_submissions(campaign_id=...)` |
+| `run_beamline(tag, deck_ref, run_as, params=None, events_per_job=1000, njobs=1, main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None, submit=True, confirm=False, deck_dir=None)` | materialize deck, allocate dsconf, write `entry.json` + `run.json`, create the campaign, and (if `submit`) fire the first tick, which submits the whole run when `njobs <= 10000` | `push_cnf`, then `run_submissions(campaign_id=...)` |
 | `make_recoveries(run_id, run_as, confirm=False)` | one prodtools tick: verify finished jobs, resubmit the missing indices, and submit any slice of this run not yet submitted (`njobs > 10000` only). Nothing advances on its own; a run with no failures never needs this call. **Ledger-wide:** prodtools scopes only the top-up to the campaign — the verify/recovery pass covers every active campaign in the caller's ledger, so under `run_as="mu2epro"` it recovers production campaigns too. | `run_submissions(campaign_id=...)` |
 | `beamline_status(run_id)` | run record merged with live campaign state (queue, outputs); `mine=True` for self runs | `campaign_status` |
 | `list_beamline_runs(state=None)` | run records under the caller's beamkit dir, newest first | — |
