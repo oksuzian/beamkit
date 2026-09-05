@@ -15,7 +15,7 @@ def built(tmp_path):
 
 def test_publish_links_to_the_sam_name_and_pushes(built, tmp_path):
     calls = []
-    staged = tmp_path / "etc.u.TBeam-bm.e470313.txt"
+    staged = tmp_path / "etc.u.TBeam-bm.e470313.0.txt"
     publishing.publish(built, staged, "scratch", ["a.root", "b.root"], "self", False,
                        push=lambda *a: calls.append(a))
     assert calls == [(staged, "scratch", ["a.root", "b.root"], "self", False)]
@@ -23,7 +23,7 @@ def test_publish_links_to_the_sam_name_and_pushes(built, tmp_path):
 
 
 def test_push_failure_discards_link_and_file(built, tmp_path):
-    staged = tmp_path / "etc.u.TBeam-bm.e470313.txt"
+    staged = tmp_path / "etc.u.TBeam-bm.e470313.0.txt"
 
     def down(*a):
         raise RuntimeError("push down")
@@ -33,7 +33,7 @@ def test_push_failure_discards_link_and_file(built, tmp_path):
 
 
 def test_link_collision_keeps_the_file_this_call_did_not_create(built, tmp_path):
-    staged = tmp_path / "etc.u.TBeam-bm.e470313.txt"
+    staged = tmp_path / "etc.u.TBeam-bm.e470313.0.txt"
     staged.write_text("published earlier\n")
     calls = []
     with pytest.raises(publishing.PublishError, match="discarded"):

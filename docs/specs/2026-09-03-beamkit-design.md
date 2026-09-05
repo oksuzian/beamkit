@@ -224,7 +224,7 @@ hand in 2013 — so a later run can resample from it:
    cannot exist: the label is part of the file name, and an existing
    `<run_id>.<flavor>.txt` is refused, not overwritten.
 4. `publish=True`: name the file as a Mu2e artifact,
-   `etc.<owner>.<desc>Beam-<flavor>.<dsconf>.txt` (the `etc` tier the
+   `etc.<owner>.<desc>Beam-<flavor>.<dsconf>.0.txt` (the `etc` tier the
    cnf tarballs already use, so pushOutput's location tables apply),
    and call prodtools `push_file(path, location, parents, run_as,
    confirm)` with the nts files as parents. `location` defaults to

@@ -66,5 +66,5 @@ def test_every_name_beamkit_produces_lives_here():
     """Four names, one home. tools used to hold three of them as f-strings."""
     assert naming.run_id("MuBeam", "e470313-001") == "MuBeam.e470313-001"
     assert naming.dataset("oksuzian", "MuBeam", "e470313") == "nts.oksuzian.MuBeam.e470313.root"
-    assert naming.beamfile_name("mu2e", "MuBeam", "bm", "e470313") == "etc.mu2e.MuBeamBeam-bm.e470313.txt"
+    assert naming.beamfile_name("mu2e", "MuBeam", "bm", "e470313") == "etc.mu2e.MuBeamBeam-bm.e470313.0.txt"
     assert naming.cnf_name("mu2e", "MuBeam", "e470313") == "cnf.mu2e.MuBeam.e470313.0.tar"

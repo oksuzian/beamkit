@@ -84,8 +84,8 @@ def test_bad_flavor_refused_before_reading(fake, monkeypatch):
 def test_publish_self_defaults_scratch(fake, beamkit_home):
     _record()
     out = tools.make_beamfile("T.e470313", "bm", "self", publish=True)
-    assert out["sam_name"] == "etc.u.TBeam-bm.e470313.txt" and out["location"] == "scratch"
-    staged = beamkit_home / "beamfiles" / "etc.u.TBeam-bm.e470313.txt"
+    assert out["sam_name"] == "etc.u.TBeam-bm.e470313.0.txt" and out["location"] == "scratch"
+    staged = beamkit_home / "beamfiles" / "etc.u.TBeam-bm.e470313.0.txt"
     assert fake["push_file"] == [dict(path=str(staged), location="scratch", run_as="self", confirm=False,
                                       parents=[f"nts.u.T.e470313.{i:08d}.root" for i in (0, 2, 3)])]
     assert staged.stat().st_ino == (beamkit_home / "beamfiles" / "T.e470313.bm.txt").stat().st_ino
@@ -96,7 +96,7 @@ def test_publish_mu2epro_defaults_tape_needs_confirm(fake):
     with pytest.raises(BeamkitError, match="confirm"):
         tools.make_beamfile("T.e470313", "bm", "mu2epro", publish=True)
     out = tools.make_beamfile("T.e470313", "bm", "mu2epro", publish=True, confirm=True)
-    assert out["location"] == "tape" and out["sam_name"] == "etc.mu2e.TBeam-bm.e470313.txt"
+    assert out["location"] == "tape" and out["sam_name"] == "etc.mu2e.TBeam-bm.e470313.0.txt"
 
 
 def test_publish_as_mu2epro_from_a_self_run_refused(fake, beamkit_home):
@@ -186,13 +186,13 @@ def test_publish_link_collision_keeps_the_file_it_did_not_create(fake, beamkit_h
     _record()
     bf_dir = beamkit_home / "beamfiles"
     bf_dir.mkdir(parents=True, exist_ok=True)
-    published = bf_dir / "etc.u.TBeam-bm.e470313.txt"
+    published = bf_dir / "etc.u.TBeam-bm.e470313.0.txt"
     published.write_text("the copy published by an earlier make_beamfile call\n")
     with pytest.raises(BeamkitError, match="discarded"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
     assert fake["push_file"] == []
     assert published.read_text() == "the copy published by an earlier make_beamfile call\n"
-    assert {p.name for p in bf_dir.iterdir()} == {"etc.u.TBeam-bm.e470313.txt"}
+    assert {p.name for p in bf_dir.iterdir()} == {"etc.u.TBeam-bm.e470313.0.txt"}
     rec = records.load("T.e470313", paths.runs_dir())
     assert rec.beamfiles == []
     # the retry path is not blocked by the pre-existing staged name
@@ -226,7 +226,7 @@ def test_label_names_the_files_and_flavor_names_the_cuts(fake, beamkit_home):
     out = tools.make_beamfile("T.e470313", "bm", "self", publish=True, label="run3")
     assert out["flavor"] == "bm" and out["label"] == "run3" and out["cuts"] == beamfile.FLAVORS["bm"]
     assert out["path"] == str(beamkit_home / "beamfiles" / "T.e470313.run3.txt")
-    assert out["sam_name"] == "etc.u.TBeam-run3.e470313.txt"
+    assert out["sam_name"] == "etc.u.TBeam-run3.e470313.0.txt"
     again = tools.make_beamfile("T.e470313", "bm", "self", label="run4")
     assert again["sam_name"] is None and again["label"] == "run4"
 

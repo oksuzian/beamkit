@@ -81,7 +81,7 @@ for got, want in ((naming.cnf_name("u", "T", "e470313"),
                   (naming.dataset("u", "T", "e470313"),
                    jc.Mu2eName.build(tier="nts", owner="u", description="T", dsconf="e470313", extension="root")),
                   (naming.beamfile_name("u", "T", "bm", "e470313"),
-                   jc.Mu2eName.build(tier="etc", owner="u", description="TBeam-bm", dsconf="e470313", extension="txt"))):
+                   jc.Mu2eName.build(tier="etc", owner="u", description="TBeam-bm", dsconf="e470313", sequencer="0", extension="txt"))):
     if got != want.filename:
         failures.append(f"naming {got!r} != Mu2eName.build {want.filename!r}")
 available = bridge.push_file_available()

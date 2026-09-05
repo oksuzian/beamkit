@@ -148,7 +148,7 @@ Any other `flavor` needs an explicit `cuts` dict:
 ```
 
 `label` names the local files and the SAM artifact
-(`etc.<owner>.<tag>Beam-<label>.<dsconf>.txt`) and defaults to the
+(`etc.<owner>.<tag>Beam-<label>.<dsconf>.0.txt`) and defaults to the
 flavor; a second beam file with the same cuts takes a new label, not a
 new flavor. `plane` is the `NTuple/<plane>` name and is validated
 before anything is read.

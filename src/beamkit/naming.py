@@ -42,7 +42,10 @@ def dataset(owner, desc, dsconf) -> str:
 
 
 def beamfile_name(owner, desc, label, dsconf) -> str:
-    return f"etc.{owner}.{desc}Beam-{label}.{dsconf}.txt"
+    """The SAM name of a published beam file. Six fields: pushOutput
+    declares FILES, and a five-field name is a dataset. The sequencer is
+    `0`, as on the cnf tarball, since a run has one beam file per label."""
+    return f"etc.{owner}.{desc}Beam-{label}.{dsconf}.0.txt"
 
 
 def allocate_dsconf(owner, desc, base, taken, explicit=None) -> str:
