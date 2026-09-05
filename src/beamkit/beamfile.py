@@ -9,11 +9,13 @@ import tempfile
 from pathlib import Path
 from typing import Iterable, Iterator, NamedTuple
 
+from beamkit import BeamkitError
+
 FLAVOR_RE = re.compile(r"^[a-z][a-z0-9]{0,15}$")
 LABEL_RE = FLAVOR_RE        # a label names the files; it defaults to the flavor
 PLANE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 CUT_KEYS = ("keep_pdg", "drop_pdg", "min_p_mev")
-DROP_KEYS = ("duplicate", "exotic", "keep_pdg", "drop_pdg", "min_p_mev", "pz_negative")
+DROP_KEYS = ("duplicate", "exotic", *CUT_KEYS, "pz_negative")
 EXOTIC_ABOVE = 1000000
 
 FLAVORS = {
@@ -29,7 +31,7 @@ HEADER = ("#BLTrackFile: Source file\n", _HDR_FMT.format(*_COLS), _HDR_FMT.forma
 ROW_FMT = "{:<13.3f} {:<12.3f} {:<12.3f} {:<10.3f} {:<10.3f} {:<10.3f} {:<12.3f} {:<7} {:<10} {:<10} {:<7} {:<7}\n"
 
 
-class BeamfileError(ValueError):
+class BeamfileError(BeamkitError):
     pass
 
 

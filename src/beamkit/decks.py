@@ -1,16 +1,17 @@
 """Deck pinning: one commit of Mu2e/G4BeamlineScripts, materialized once."""
-import re
 import shutil
 import subprocess
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from beamkit import BeamkitError
+from beamkit.naming import SHA_RE
+
 DEFAULT_DECK_URL = "https://github.com/Mu2e/G4BeamlineScripts"
-_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
-class DeckError(RuntimeError):
+class DeckError(BeamkitError):
     pass
 
 
@@ -37,7 +38,7 @@ def _git(*args, cwd=None) -> str:
 
 def resolve_ref(url: str, ref: str) -> str:
     """A 40-hex sha as given; otherwise a tag (peeled) or branch via ls-remote."""
-    if _SHA_RE.match(ref):
+    if SHA_RE.match(ref):
         return ref
     out = _git("ls-remote", "--tags", "--heads", url)
     by_ref = {}

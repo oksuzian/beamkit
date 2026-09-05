@@ -23,6 +23,8 @@ import prodtools_mcp.tools.status as status         # noqa: E402
 import utils.samweb_wrapper as sw                   # noqa: E402
 import utils.file_resolver as fr                    # noqa: E402
 import utils.job_common as jc                       # noqa: E402
+import utils.jobdesc as jobdesc                     # noqa: E402
+import utils.json2jobdef as j2j                     # noqa: E402
 
 failures = []
 signatures = {"push_cnf": str(inspect.signature(wtools.push_cnf)),
@@ -52,7 +54,7 @@ bind(fr, "dataset_dir", "/pnfs/x")
 # utils.job_common.Mu2eName stays REAL: bridge.dataset_files depends on
 # .parse, .sequencer and .relpathname() and this is where that is checked.
 
-from beamkit import bridge                          # noqa: E402
+from beamkit import bridge, compose, naming         # noqa: E402
 
 bridge.push_cnf("/tmp/entry.json", "T", "e470313", 1, "self", False)
 bridge.push_cnf("/tmp/entry.json", "T", "e470313", 1, "self", False, prodtools_dir=root)
@@ -68,6 +70,20 @@ if files != [{"name": "nts.u.T.e470313.00000000.root", "index": 0, "size": 10,
 info = bridge.prodtools_info()
 if info.get("root") != runner.REPO_ROOT:
     failures.append(f"prodtools_info root {info!r} != runner.REPO_ROOT {runner.REPO_ROOT!r}")
+# Facts beamkit copies rather than imports (only bridge may import prodtools):
+# the worker-owned g4bl params, the outloc vocabulary, and the dot-name grammar.
+if tuple(compose.G4BL_WORKER_PARAMS) != tuple(j2j.G4BL_WORKER_PARAMS):
+    failures.append(f"compose.G4BL_WORKER_PARAMS {compose.G4BL_WORKER_PARAMS} != json2jobdef {j2j.G4BL_WORKER_PARAMS}")
+if not set(compose.OUTLOCS) <= set(jobdesc.OUTLOC_VALID):
+    failures.append(f"compose.OUTLOCS {compose.OUTLOCS} not within jobdesc.OUTLOC_VALID {jobdesc.OUTLOC_VALID}")
+for got, want in ((naming.cnf_name("u", "T", "e470313"),
+                   jc.Mu2eName.build(tier="cnf", owner="u", description="T", dsconf="e470313", sequencer="0", extension="tar")),
+                  (naming.dataset("u", "T", "e470313"),
+                   jc.Mu2eName.build(tier="nts", owner="u", description="T", dsconf="e470313", extension="root")),
+                  (naming.beamfile_name("u", "T", "bm", "e470313"),
+                   jc.Mu2eName.build(tier="etc", owner="u", description="TBeam-bm", dsconf="e470313", extension="txt"))):
+    if got != want.filename:
+        failures.append(f"naming {got!r} != Mu2eName.build {want.filename!r}")
 available = bridge.push_file_available()
 if available:
     bind(wtools, "push_file", {})
