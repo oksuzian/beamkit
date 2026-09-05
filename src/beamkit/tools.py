@@ -84,21 +84,40 @@ def _is_retryable_run_dir(run_id, runs_dir) -> bool:
     return rec.state == "enqueue_failed" and rec.campaign_id is None
 
 
-def _dsconf_after_failed_push(owner, tag, dsconf) -> str:
-    """Whether the cnf actually reached SAM decides whether the dsconf is
-    burned; a push that failed before the SAM write leaves it free, and the
-    retry reuses it. Never claim one without asking."""
-    name = naming.cnf_name(owner, tag, dsconf)
+def _after_failed_push(rec, run_as) -> str:
+    """What a failed push_cnf left behind, and what the record should say.
+
+    prodtools' _ENQUEUE_RECOVERY: the cnf may have reached SAM, and the
+    campaign may have been created, before the error. Probe both. A cnf in
+    SAM with its campaign in the ledger is a run that exists -- adopt the
+    campaign into the record (state 'created') so make_recoveries submits
+    it, instead of burning the dsconf and orphaning the campaign. A cnf in
+    SAM with no campaign is a burned dsconf; a cnf not in SAM leaves the
+    dsconf free and the run dir retryable in place."""
+    name = naming.cnf_name(rec.owner, rec.tag, rec.dsconf)
     try:
         landed = bridge.cnf_exists(name)
     except Exception as e:
         return (f"; whether {name} reached SAM could not be determined "
                 f"({type(e).__name__}: {e}), so check SAM before retrying")
-    if landed:
-        return (f"; {name} is in SAM, so the dsconf {dsconf!r} is burned and the next call "
-                f"allocates the next suffix")
-    return (f"; {name} is not in SAM, so the dsconf {dsconf!r} is free and this call can be "
-            f"retried once the cause is fixed")
+    if not landed:
+        return (f"; {name} is not in SAM, so the dsconf {rec.dsconf!r} is free and this call can be "
+                f"retried once the cause is fixed")
+    try:
+        camps = bridge.campaigns(mine=(run_as == "self"))
+    except Exception as e:
+        return (f"; {name} is in SAM, so the dsconf {rec.dsconf!r} is burned, but the ledger could not "
+                f"be read ({type(e).__name__}: {e}): check `submissions status` for a campaign on it "
+                f"before retrying")
+    camp = next((c for c in camps if c.get("tarball") == name), None)
+    if camp is None:
+        return (f"; {name} is in SAM with no campaign, so the dsconf {rec.dsconf!r} is burned and the "
+                f"next call allocates the next suffix")
+    rec.campaign_id, rec.tarball, rec.state = camp["id"], name, "created"
+    rec.datasets = [_dataset(rec)]
+    return (f"; {name} is in SAM and campaign {camp['id']} exists for it, so the record now carries "
+            f"that campaign in state 'created' and nothing was submitted: "
+            f"make_recoveries({rec.run_id!r}, {run_as!r}) submits it")
 
 
 def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=1000, njobs=1,
@@ -137,9 +156,9 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
         pushed = bridge.push_cnf(entry_path, tag, dsconf, slice_size, run_as, confirm)
     except Exception as e:
         rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
+        outcome = _after_failed_push(rec, run_as)
         records.save(rec, runs_dir)
-        raise ToolError(f"run {run_id}: push_cnf failed ({e})"
-                        f"{_dsconf_after_failed_push(owner, tag, dsconf)}") from e
+        raise ToolError(f"run {run_id}: push_cnf failed ({e}){outcome}") from e
     rec.campaign_id, rec.tarball = pushed["campaign_id"], pushed["tarball"]
     # prodtools echoes the entry's outloc key ("nts.*.root"), a glob, not a name;
     # the dataset this run actually writes is the one _dataset composes.

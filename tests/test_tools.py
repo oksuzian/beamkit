@@ -146,9 +146,48 @@ def test_push_fails_after_sam_reports_the_dsconf_burned(fake_bridge, monkeypatch
     monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
     monkeypatch.setattr(tools.bridge, "push_cnf",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rc=1 after the push")))
-    with pytest.raises(tools.ToolError, match="is in SAM.*burned"):
+    monkeypatch.setattr(tools.bridge, "campaigns", lambda mine: [])
+    with pytest.raises(tools.ToolError, match="is in SAM.*no campaign.*burned"):
         _run()
     assert seen == ["cnf.u.T.e470313.0.tar", "cnf.u.T.e470313.0.tar"]
+    assert records.load("T.e470313", paths.runs_dir()).state == "enqueue_failed"
+
+
+def test_push_fails_after_the_campaign_was_created_adopts_it(fake_bridge, monkeypatch):
+    """prodtools' _ENQUEUE_RECOVERY: the cnf can be in SAM and the campaign
+    created when push_cnf still raises. beamkit used to report only 'the
+    dsconf is burned', so the retry allocated -001 and the campaign it had
+    just created was orphaned with no beamkit run pointing at it."""
+    seen = []
+    def cnf_exists(name):
+        seen.append(name)
+        return len(seen) > 1 and name == "cnf.u.T.e470313.0.tar"   # in SAM once pushed
+    monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
+    good = tools.bridge.push_cnf
+    monkeypatch.setattr(tools.bridge, "push_cnf",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ksu ate the exit code")))
+    with pytest.raises(tools.ToolError, match="campaign 7 exists.*make_recoveries"):
+        _run()
+    rec = records.load("T.e470313", paths.runs_dir())
+    assert rec.state == "created" and rec.campaign_id == 7 and rec.tarball == "cnf.u.T.e470313.0.tar"
+    assert rec.datasets == ["nts.u.T.e470313.root"] and "ksu ate" in rec.error
+    out = tools.make_recoveries("T.e470313", "self")
+    assert out["campaign_id"] == 7 and records.load("T.e470313", paths.runs_dir()).state == "submitted"
+    # a second run_beamline is a NEW run on the next suffix, not a retry of this one
+    monkeypatch.setattr(tools.bridge, "push_cnf", good)
+    assert _run()["run_id"] == "T.e470313-001"
+    assert records.load("T.e470313", paths.runs_dir()).campaign_id == 7
+
+
+def test_push_fails_in_sam_and_the_ledger_is_unreadable_says_so(fake_bridge, monkeypatch):
+    from beamkit import bridge as _bridge
+    seen = []
+    monkeypatch.setattr(tools.bridge, "cnf_exists", lambda n: bool(seen.append(n)) or len(seen) > 1)
+    monkeypatch.setattr(tools.bridge, "push_cnf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rc=1")))
+    monkeypatch.setattr(tools.bridge, "campaigns", lambda mine: (_ for _ in ()).throw(_bridge.BridgeError("ledger locked")))
+    with pytest.raises(tools.ToolError, match="is in SAM.*ledger could not be read.*ledger locked"):
+        _run()
+    assert records.load("T.e470313", paths.runs_dir()).campaign_id is None
 
 
 def test_push_fails_and_sam_probe_fails_says_so(fake_bridge, monkeypatch):
