@@ -9,7 +9,6 @@ the ones bridge itself sends; nothing is copied from bridge into this file.
 """
 import inspect
 import json
-import os
 import sys
 from unittest.mock import MagicMock
 
@@ -26,6 +25,8 @@ import utils.file_resolver as fr                    # noqa: E402
 import utils.job_common as jc                       # noqa: E402
 
 failures = []
+signatures = {"push_cnf": str(inspect.signature(wtools.push_cnf)),
+              "run_submissions": str(inspect.signature(wtools.run_submissions))}
 
 
 def bind(mod, name, ret):
@@ -54,8 +55,7 @@ bind(fr, "dataset_dir", "/pnfs/x")
 from beamkit import bridge                          # noqa: E402
 
 bridge.push_cnf("/tmp/entry.json", "T", "e470313", 1, "self", False)
-os.environ["BEAMKIT_PRODTOOLS_DIR"] = root           # the dev-tarball form
-bridge.push_cnf("/tmp/entry.json", "T", "e470313", 1, "self", False)
+bridge.push_cnf("/tmp/entry.json", "T", "e470313", 1, "self", False, prodtools_dir=root)
 bridge.tick("self", 1, False)
 bridge.tick("self", None, False)
 bridge.campaign_status(1, mine=True)
@@ -73,5 +73,4 @@ if available:
     bind(wtools, "push_file", {})
     bridge.push_file("/tmp/x.txt", "scratch", ["a.root"], "self", False)
 
-print(json.dumps({"failures": failures, "push_file_available": available,
-                  "push_cnf": str(inspect.signature(wtools.push_cnf)) if not failures else None}))
+print(json.dumps({"failures": failures, "push_file_available": available, "signatures": signatures}))

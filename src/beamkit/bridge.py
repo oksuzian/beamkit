@@ -4,7 +4,6 @@ so the rest of beamkit, and every unit test, runs with prodtools absent.
 Wraps prodtools' own MCP tool functions in-process (their gates included)
 plus three read-only helpers from prodtools utils. The only subprocess
 here is `git rev-parse` in prodtools_info; no ledger access."""
-import os
 import subprocess
 
 _HINT = ("prodtools is not importable here. Start beamkit through "
@@ -24,12 +23,11 @@ def _import(modname):
         raise BridgeError(f"{_HINT} ({modname}: {e})") from e
 
 
-def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm) -> dict:
+def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm, prodtools_dir=None) -> dict:
+    """prodtools_dir names a dev checkout to ship to the workers; None means
+    the cvmfs release and the keyword is not sent at all."""
     tools = _import("prodtools_mcp_write.tools")
-    kw = {}
-    dev_dir = os.environ.get("BEAMKIT_PRODTOOLS_DIR")
-    if dev_dir:
-        kw["prodtools_dir"] = dev_dir
+    kw = {"prodtools_dir": prodtools_dir} if prodtools_dir else {}
     return tools.push_cnf(json=str(json_path), desc=desc, dsconf=dsconf,
                           slice_size=slice_size, run_as=run_as, confirm=confirm, **kw)
 
@@ -102,4 +100,4 @@ def prodtools_info() -> dict:
         commit = proc.stdout.strip() if proc.returncode == 0 else None
     except OSError:
         commit = None
-    return {"root": root, "commit": commit, "dev_dir": os.environ.get("BEAMKIT_PRODTOOLS_DIR") or None}
+    return {"root": root, "commit": commit}

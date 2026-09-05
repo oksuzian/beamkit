@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from beamkit import __version__, beamfile, bridge, compose, decks, naming, paths, records
+from beamkit import __version__, beamfile, bridge, compose, decks, identity, naming, paths, records
 from beamkit.decks import DEFAULT_DECK_URL
 
 SLICE_MAX = 10000
@@ -14,27 +14,21 @@ class ToolError(RuntimeError):
     pass
 
 
-def _require(run_as, confirm):
-    """The same gate prodtools enforces, applied before any side effect so a
-    refused mu2epro call burns no dsconf and writes no record."""
-    if run_as not in naming.RUN_AS:
-        raise ToolError(f"run_as must be one of {naming.RUN_AS}, got {run_as!r}")
-    if run_as == "mu2epro" and os.environ.get("BEAMKIT_PRODTOOLS_DIR"):
-        raise ToolError("BEAMKIT_PRODTOOLS_DIR is set, which ships that checkout to the workers; "
-                        "prodtools refuses a dev prodtools_dir for run_as='mu2epro' outright. A "
-                        "production run uses a published cvmfs prodtools release only: unset "
-                        "BEAMKIT_PRODTOOLS_DIR")
-    if run_as == "mu2epro" and not confirm:
-        raise ToolError("run_as='mu2epro' registers artifacts in production SAM and submits "
-                        "production grid jobs; pass confirm=True")
+def _identity(run_as, confirm, writes=True) -> identity.Identity:
+    """Resolved before any side effect, so a refused call burns no dsconf
+    and writes no record."""
+    try:
+        return identity.resolve(run_as, confirm, writes=writes)
+    except identity.IdentityError as e:
+        raise ToolError(str(e)) from e
 
 
-def _outloc(outloc, run_as):
+def _outloc(outloc, ident):
     """beamkit holds the output location and the account at the same moment,
     so it can refuse the pair prodtools only discovers on the worker.
     Membership in OUTLOCS is compose.validate_inputs' rule; this is the
-    one that needs run_as."""
-    if outloc == "disk" and run_as != "mu2epro":
+    one that needs the identity."""
+    if outloc == "disk" and not ident.production:
         raise ToolError("outloc='disk' is /mu2e/persistent/datasets, where only mu2epro has "
                         "storage.modify: every worker would run g4bl to completion and then 403 in "
                         "pushOutput. Use outloc='scratch', or run_as='mu2epro'")
@@ -54,11 +48,11 @@ def _summary(output, n=5):
     return "\n".join(lines[-n:])
 
 
-def _pin(deck_ref, deck_dir, deck_url, run_as):
+def _pin(deck_ref, deck_dir, deck_url, ident):
     if (deck_ref is None) == (deck_dir is None):
         raise ToolError("pass exactly one of deck_ref (a commit sha or tag) or deck_dir (a local checkout)")
     if deck_dir is not None:
-        if run_as != "self":
+        if ident.production:
             raise ToolError("deck_dir is a development option: run_as='self' only")
         try:
             pin = decks.inspect_local(deck_dir)
@@ -84,7 +78,7 @@ def _is_retryable_run_dir(run_id, runs_dir) -> bool:
     return rec.state == "enqueue_failed" and rec.campaign_id is None
 
 
-def _after_failed_push(rec, run_as) -> str:
+def _after_failed_push(rec, ident) -> str:
     """What a failed push_cnf left behind, and what the record should say.
 
     prodtools' _ENQUEUE_RECOVERY: the cnf may have reached SAM, and the
@@ -104,7 +98,7 @@ def _after_failed_push(rec, run_as) -> str:
         return (f"; {name} is not in SAM, so the dsconf {rec.dsconf!r} is free and this call can be "
                 f"retried once the cause is fixed")
     try:
-        camps = bridge.campaigns(mine=(run_as == "self"))
+        camps = bridge.campaigns(mine=ident.mine)
     except Exception as e:
         return (f"; {name} is in SAM, so the dsconf {rec.dsconf!r} is burned, but the ledger could not "
                 f"be read ({type(e).__name__}: {e}): check `submissions status` for a campaign on it "
@@ -117,22 +111,23 @@ def _after_failed_push(rec, run_as) -> str:
     rec.datasets = [_dataset(rec)]
     return (f"; {name} is in SAM and campaign {camp['id']} exists for it, so the record now carries "
             f"that campaign in state 'created' and nothing was submitted: "
-            f"make_recoveries({rec.run_id!r}, {run_as!r}) submits it")
+            f"make_recoveries({rec.run_id!r}, {ident.run_as!r}) submits it")
 
 
 def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=1000, njobs=1,
                  main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None,
                  submit=True, confirm=False, deck_dir=None, deck_url=DEFAULT_DECK_URL) -> dict:
-    _require(run_as, confirm)
+    ident = _identity(run_as, confirm)
     try:
+        dev_dir = ident.dev_dir_for_shipping()
         naming.validate_tag(tag)
         params = compose.validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
-    except (naming.NamingError, compose.ComposeError) as e:
+    except (identity.IdentityError, naming.NamingError, compose.ComposeError) as e:
         raise ToolError(str(e)) from e
-    _outloc(outloc, run_as)
+    _outloc(outloc, ident)
     slice_size = _slice_size(slice_size, njobs)
-    owner = naming.owner_for(run_as)
-    pin = _pin(deck_ref, deck_dir, deck_url, run_as)
+    owner = ident.owner
+    pin = _pin(deck_ref, deck_dir, deck_url, ident)
     try:
         dsconf = naming.allocate_dsconf(owner, tag, naming.dsconf_base(pin.sha), bridge.cnf_exists, explicit=dsconf)
         entry = compose.entry(tag=tag, dsconf=dsconf, deck_dir=pin.dir, main_input=main_input,
@@ -149,14 +144,15 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=owner, run_as=run_as,
                             deck=pin.as_record(), params=params, events_per_job=events_per_job,
                             njobs=njobs, outloc=outloc, slice_size=slice_size, state="created",
-                            created=records.now_utc(), prodtools=bridge.prodtools_info(),
+                            created=records.now_utc(),
+                            prodtools=dict(bridge.prodtools_info(), dev_dir=dev_dir),
                             beamkit_version=__version__)
     records.save(rec, runs_dir)
     try:
-        pushed = bridge.push_cnf(entry_path, tag, dsconf, slice_size, run_as, confirm)
+        pushed = bridge.push_cnf(entry_path, tag, dsconf, slice_size, run_as, confirm, prodtools_dir=dev_dir)
     except Exception as e:
         rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
-        outcome = _after_failed_push(rec, run_as)
+        outcome = _after_failed_push(rec, ident)
         records.save(rec, runs_dir)
         raise ToolError(f"run {run_id}: push_cnf failed ({e}){outcome}") from e
     rec.campaign_id, rec.tarball = pushed["campaign_id"], pushed["tarball"]
@@ -230,13 +226,13 @@ def make_recoveries(run_id, run_as, confirm=False) -> dict:
     active, so the bare tick is used: its verify/recovery pass reaches this
     run's rows and its top-up feeds every other active campaign in the
     ledger. The result names which form ran."""
-    _require(run_as, confirm)
+    ident = _identity(run_as, confirm)
     rec = _load(run_id)
     if rec.campaign_id is None:
         raise ToolError(f"run {run_id} has no campaign (state {rec.state!r}); nothing to recover")
-    if run_as != rec.run_as:
+    if ident.run_as != rec.run_as:
         raise ToolError(f"run {run_id} lives in the run_as={rec.run_as!r} ledger; tick it as that identity")
-    camp = _campaign(rec.campaign_id, mine=(rec.run_as == "self"))
+    camp = _campaign(rec.campaign_id, mine=ident.mine)
     scoped = camp["state"] == "active"
     t = _tick_into(rec, run_as, confirm, paths.runs_dir(),
                    failure=f"run {run_id}: tick of campaign {rec.campaign_id} failed",
@@ -257,7 +253,7 @@ def beamline_status(run_id) -> dict:
     rec = _load(run_id)
     campaign = None
     if rec.campaign_id is not None:
-        campaign = bridge.campaign_status(rec.campaign_id, mine=(rec.run_as == "self"))
+        campaign = bridge.campaign_status(rec.campaign_id, mine=identity.for_record(rec).mine)
     return {"record": rec.to_dict(), "campaign": campaign}
 
 
@@ -287,16 +283,13 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
                   location=None, confirm=False) -> dict:
     """A BLTrackFile from whatever nts files the run has in SAM. No
     completeness check: pot counts the files that exist."""
-    if publish:
-        _require(run_as, confirm)
-    elif run_as not in naming.RUN_AS:
-        raise ToolError(f"run_as must be one of {naming.RUN_AS}, got {run_as!r}")
+    ident = _identity(run_as, confirm, writes=publish)
     try:
         resolved = beamfile.resolve_cuts(flavor, cuts)
     except beamfile.BeamfileError as e:
         raise ToolError(str(e)) from e
     if publish:
-        location = location or ("tape" if run_as == "mu2epro" else "scratch")
+        location = location or ident.default_publish_location
         if location not in compose.OUTLOCS:
             raise ToolError(f"location must be one of {compose.OUTLOCS}, got {location!r}")
         # knowable now; discovering it in the publish unwind costs hours of
@@ -312,7 +305,7 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
     rec = _load(run_id)
     # the file is NAMED from the record's identity and PUSHED as run_as; a
     # mismatch publishes one owner's name under the other account
-    if publish and run_as != rec.run_as:
+    if publish and ident.run_as != rec.run_as:
         raise ToolError(f"run {run_id} was created with run_as={rec.run_as!r}, so its beam file is "
                         f"named etc.{rec.owner}.…; publishing it as run_as={run_as!r} would push "
                         f"that name under the other identity. Pass run_as={rec.run_as!r}")
@@ -372,7 +365,8 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
 
 def get_server_info() -> dict:
     return {"name": "beamkit", "version": __version__, "python": sys.executable,
-            "prodtools": bridge.prodtools_info(), "deck_url": DEFAULT_DECK_URL,
+            "prodtools": bridge.prodtools_info(), "dev_dir": identity.dev_dir_from_env(),
+            "deck_url": DEFAULT_DECK_URL,
             "decks_dir": str(paths.decks_dir()), "records_dir": str(paths.runs_dir()),
             "beamfiles_dir": str(paths.beamfiles_dir()), "slice_max": SLICE_MAX,
             "writes": "run_beamline, make_recoveries (and make_beamfile with publish=True) write through "

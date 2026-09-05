@@ -68,21 +68,17 @@ def test_push_cnf_forwards_as_keywords(fake_prodtools, tmp_path):
                                           "slice_size": 3, "run_as": "self", "confirm": False}
 
 
-def test_push_cnf_forwards_dev_dir_when_set(fake_prodtools, tmp_path, monkeypatch):
-    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
-    bridge.push_cnf(tmp_path / "e.json", "T", "d", 1, "self", False)
+def test_push_cnf_forwards_an_explicit_dev_dir(fake_prodtools, tmp_path):
+    bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False,
+                    prodtools_dir="/exp/mu2e/app/users/u/prodtools")
     assert fake_prodtools["push_cnf"]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
 
 
-def test_push_cnf_omits_dev_dir_when_unset(fake_prodtools, tmp_path, monkeypatch):
-    monkeypatch.delenv("BEAMKIT_PRODTOOLS_DIR", raising=False)
-    bridge.push_cnf(tmp_path / "e.json", "T", "d", 1, "self", False)
-    assert "prodtools_dir" not in fake_prodtools["push_cnf"]
-
-
-def test_push_cnf_omits_dev_dir_when_empty(fake_prodtools, tmp_path, monkeypatch):
-    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "")
-    bridge.push_cnf(tmp_path / "e.json", "T", "d", 1, "self", False)
+def test_push_cnf_sends_no_prodtools_dir_keyword_for_the_release(fake_prodtools, tmp_path, monkeypatch):
+    """None means the cvmfs release: the keyword is absent, not None, and the
+    environment is not consulted here -- identity reads it, once."""
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
+    bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False)
     assert "prodtools_dir" not in fake_prodtools["push_cnf"]
 
 
@@ -151,19 +147,14 @@ def test_prodtools_info_reports_root_and_commit(fake_prodtools, tmp_path):
     subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
                     "commit", "-q", "--allow-empty", "-m", "x"], check=True)
     info = bridge.prodtools_info()
-    assert info["root"] == str(tmp_path) and len(info["commit"]) == 40 and info["dev_dir"] is None
+    assert info == {"root": str(tmp_path), "commit": info["commit"]} and len(info["commit"]) == 40
 
 
 def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path, monkeypatch):
     def raise_missing(*a, **k):
         raise FileNotFoundError("git")
     monkeypatch.setattr(bridge.subprocess, "run", raise_missing)
-    assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None, "dev_dir": None}
-
-
-def test_prodtools_info_empty_env_reports_none(fake_prodtools, monkeypatch):
-    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "")
-    assert bridge.prodtools_info()["dev_dir"] is None
+    assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None}
 
 
 def test_campaigns_is_the_ledger_only_listing(fake_prodtools):

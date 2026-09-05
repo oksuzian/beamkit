@@ -1,8 +1,6 @@
 """Mu2e names for a beamkit run: desc = tag, dsconf = deck sha[:7]."""
-import getpass
 import re
 
-RUN_AS = ("self", "mu2epro")
 TAG_RE = re.compile(r"^[A-Za-z0-9]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 EXPLICIT_DSCONF_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -27,14 +25,6 @@ def dsconf_base(sha) -> str:
 
 def cnf_name(owner, desc, dsconf) -> str:
     return f"cnf.{owner}.{desc}.{dsconf}.0.tar"
-
-
-def owner_for(run_as) -> str:
-    if run_as == "self":
-        return getpass.getuser()
-    if run_as == "mu2epro":
-        return "mu2e"
-    raise NamingError(f"run_as must be one of {RUN_AS}, got {run_as!r}")
 
 
 def allocate_dsconf(owner, desc, base, taken, explicit=None) -> str:

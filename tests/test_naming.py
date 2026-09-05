@@ -1,5 +1,3 @@
-import getpass
-
 import pytest
 
 from beamkit import naming
@@ -62,9 +60,3 @@ def test_allocate_explicit_bad_token():
     with pytest.raises(naming.NamingError):
         naming.allocate_dsconf("u", "T", "e470313", lambda n: False, explicit="a.b")
 
-
-def test_owner_for():
-    assert naming.owner_for("self") == getpass.getuser()
-    assert naming.owner_for("mu2epro") == "mu2e"
-    with pytest.raises(naming.NamingError):
-        naming.owner_for("root")

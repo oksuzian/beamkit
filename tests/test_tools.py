@@ -21,9 +21,10 @@ def deck(tmp_path):
 @pytest.fixture
 def fake_bridge(monkeypatch, deck):
     calls = {"push_cnf": [], "tick": [], "cnf_exists": []}
-    def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm):
+    def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm, prodtools_dir=None):
         calls["push_cnf"].append(dict(json_path=str(json_path), desc=desc, dsconf=dsconf,
-                                      slice_size=slice_size, run_as=run_as, confirm=confirm))
+                                      slice_size=slice_size, run_as=run_as, confirm=confirm,
+                                      **({"prodtools_dir": prodtools_dir} if prodtools_dir else {})))
         # exactly what prodtools returns: the entry's outloc key (a glob) and
         # the njobs it read off the entry
         return {"tarball": f"cnf.u.{desc}.{dsconf}.0.tar", "datasets": ["nts.*.root"],
@@ -37,7 +38,7 @@ def fake_bridge(monkeypatch, deck):
     monkeypatch.setattr(tools.bridge, "push_cnf", push_cnf)
     monkeypatch.setattr(tools.bridge, "tick", tick)
     monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
-    monkeypatch.setattr(tools.bridge, "prodtools_info", lambda: {"root": "/pt", "commit": "c" * 40, "dev_dir": None})
+    monkeypatch.setattr(tools.bridge, "prodtools_info", lambda: {"root": "/pt", "commit": "c" * 40})
     monkeypatch.setattr(tools.bridge, "campaign_status", lambda campaign_id, mine: {"campaign_id": campaign_id, "mine": mine})
     calls["campaigns"] = []
     def campaigns(mine):
@@ -48,7 +49,7 @@ def fake_bridge(monkeypatch, deck):
     from beamkit import decks
     monkeypatch.setattr(tools.decks, "materialize",
                         lambda url, ref, cache: decks.DeckPin(url, ref, SHA, str(deck), True))
-    monkeypatch.setattr(tools.naming, "owner_for", lambda run_as: "u" if run_as == "self" else "mu2e")
+    monkeypatch.setattr(tools.identity, "_username", lambda: "u")
     return calls
 
 
@@ -236,9 +237,17 @@ def test_mu2epro_with_dev_prodtools_dir_refused_before_any_side_effect(fake_brid
     assert fake_bridge["cnf_exists"] == [] and not (beamkit_home / "runs").exists()
 
 
-def test_self_run_still_accepts_dev_prodtools_dir(fake_bridge, monkeypatch):
+def test_self_run_ships_the_dev_prodtools_dir_and_records_it(fake_bridge, monkeypatch):
     monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
-    assert _run()["state"] == "submitted"
+    out = _run()
+    assert out["state"] == "submitted"
+    assert fake_bridge["push_cnf"][0]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
+    assert out["prodtools"]["dev_dir"] == "/exp/mu2e/app/users/u/prodtools"
+
+
+def test_release_run_sends_no_prodtools_dir(fake_bridge):
+    out = _run()
+    assert "prodtools_dir" not in fake_bridge["push_cnf"][0] and out["prodtools"]["dev_dir"] is None
 
 
 def test_tick_fails_leaves_recoverable_record(fake_bridge, monkeypatch):
@@ -356,7 +365,7 @@ def test_beamline_outputs(fake_bridge):
 def test_get_server_info(fake_bridge, beamkit_home):
     info = tools.get_server_info()
     assert info["name"] == "beamkit" and info["prodtools"]["commit"] == "c" * 40
-    assert info["prodtools"]["dev_dir"] is None
+    assert info["dev_dir"] is None
     assert info["records_dir"] == str(beamkit_home / "runs") and info["slice_max"] == 10000
 
 
