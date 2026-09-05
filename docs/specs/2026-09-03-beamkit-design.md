@@ -402,10 +402,12 @@ beamkit never runs on a worker, so the py3.9 rule for prodtools
 
 ## 12. Open questions for review
 
-1. Resolved 2026-09-03: default `events_per_job=1000` accepted. The
-   2026-09-02 smoke ran 10 events in 4–6 minutes with field generation
-   dominating, so per-event cost is not yet measured; revisit after the
-   first 1000-event run reports wall time.
+1. Resolved 2026-09-03: default `events_per_job=1000` accepted. Measured
+   2026-09-05 (campaign 8, 10 jobs x 1000 events on prodtools v3.3.2):
+   948-2454 s wall per job, mean 1735 s, ~1.4 s per event after the
+   ~300 s setup; 1.07 GB RSS; ~550 kB of nts per job; the `bm` beam file
+   is 0.81 rows/POT at ~107 bytes/POT. 1000 stays the default; production
+   runs should pass 5000-10000 to keep job counts down.
 2. Resolved 2026-09-03: deck repo default
    `https://github.com/Mu2e/G4BeamlineScripts` and `main_input="Mu2E.in"`
    accepted.
