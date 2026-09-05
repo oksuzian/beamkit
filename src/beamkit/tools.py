@@ -144,7 +144,15 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     # prodtools echoes the entry's outloc key ("nts.*.root"), a glob, not a name;
     # the dataset this run actually writes is the one _dataset composes.
     rec.datasets, rec.prodtools_datasets = [_dataset(rec)], list(pushed["datasets"])
+    # the campaign's njobs is what missing_indices is measured against; the
+    # requested count is only what we asked for
+    rec.njobs = pushed["njobs"]
     records.save(rec, runs_dir)
+    if rec.njobs != njobs:
+        raise ToolError(f"run {run_id}: prodtools reports campaign {rec.campaign_id} holds {rec.njobs} jobs "
+                        f"but this call asked for {njobs}; the record now carries {rec.njobs} and nothing "
+                        f"was submitted. Understand the difference, then make_recoveries({run_id!r}, "
+                        f"{run_as!r}) submits it")
     if submit:
         t = _tick_into(rec, run_as, confirm, runs_dir,
                        failure=f"run {run_id}: campaign {rec.campaign_id} was created but the first tick failed; "

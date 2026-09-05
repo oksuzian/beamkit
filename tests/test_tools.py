@@ -24,9 +24,10 @@ def fake_bridge(monkeypatch, deck):
     def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm):
         calls["push_cnf"].append(dict(json_path=str(json_path), desc=desc, dsconf=dsconf,
                                       slice_size=slice_size, run_as=run_as, confirm=confirm))
-        # exactly what prodtools returns: the entry's outloc key, a glob
+        # exactly what prodtools returns: the entry's outloc key (a glob) and
+        # the njobs it read off the entry
         return {"tarball": f"cnf.u.{desc}.{dsconf}.0.tar", "datasets": ["nts.*.root"],
-                "campaign_id": 7, "njobs": 3}
+                "campaign_id": 7, "njobs": json.loads(Path(json_path).read_text())[0]["njobs"]}
     def tick(run_as, campaign_id, confirm):
         calls["tick"].append(dict(run_as=run_as, campaign_id=campaign_id, confirm=confirm))
         return {"rc": 0, "needs_attention": False, "campaign_id": campaign_id, "output": "a\nb\ntop-up: 1 slice\n"}
@@ -355,3 +356,18 @@ def test_bad_counts_refused_before_the_deck_fetch_and_the_sam_probe(fake_bridge,
         _run(**kw)
     assert fetched == [] and fake_bridge["cnf_exists"] == []
     assert not (beamkit_home / "runs").exists()
+
+
+def test_campaign_njobs_disagreeing_with_the_request_is_refused_before_the_tick(fake_bridge, monkeypatch):
+    """push_cnf returns the njobs the campaign actually holds. It was
+    discarded, and missing_indices was later computed from the requested
+    count. A disagreement is recorded as the campaign's truth and refused
+    loudly before anything is submitted; the campaign exists, so
+    make_recoveries can still submit it once the cause is understood."""
+    good = tools.bridge.push_cnf
+    monkeypatch.setattr(tools.bridge, "push_cnf", lambda *a, **k: dict(good(*a, **k), njobs=4))
+    with pytest.raises(tools.ToolError, match="holds 4 jobs.*asked for 3.*make_recoveries"):
+        _run()
+    rec = records.load("T.e470313", paths.runs_dir())
+    assert rec.campaign_id == 7 and rec.njobs == 4 and rec.state == "created"
+    assert fake_bridge["tick"] == []
