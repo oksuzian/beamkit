@@ -27,8 +27,9 @@ it is refused unless confirm=true, both here and inside prodtools.
 make_beamfile(run_id, flavor, run_as) builds a g4bl BLTrackFile from the
 nts files the run has in SAM, whatever their number: pot = n_files *
 events_per_job and missing_indices are recorded. flavor "bm" or "ps"
-selects a preset cut table; any other label needs cuts={keep_pdg,
-drop_pdg, min_p_mev}. publish=true pushes it to SAM via prodtools
+selects a preset cut table; any other flavor needs cuts={keep_pdg,
+drop_pdg, min_p_mev}. label names the files and the SAM artifact and
+defaults to the flavor. publish=true pushes it to SAM via prodtools
 push_file (tape for mu2epro, scratch for self) when prodtools has it.
 
 Records live under BEAMKIT_HOME/runs/<run_id>/ (entry.json, run.json);
@@ -79,12 +80,13 @@ def create_mcp_server():
     def beamline_outputs(run_id: str) -> dict:
         return tools.beamline_outputs(run_id=run_id)
 
-    @mcp.tool(name="make_beamfile", description="Build a BLTrackFile beam file from the run's nts files; preset flavor bm/ps or custom cuts; optional SAM publish.")
+    @mcp.tool(name="make_beamfile", description="Build a BLTrackFile beam file from the run's nts files; preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.")
     def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712",
                       cuts: Optional[dict] = None, publish: bool = False,
-                      location: Optional[str] = None, confirm: bool = False) -> dict:
+                      location: Optional[str] = None, confirm: bool = False,
+                      label: Optional[str] = None) -> dict:
         return tools.make_beamfile(run_id=run_id, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
-                                   publish=publish, location=location, confirm=confirm)
+                                   publish=publish, location=location, confirm=confirm, label=label)
 
     @mcp.tool(name="get_server_info", description="beamkit version, prodtools root and commit, directories, limits.")
     def get_server_info() -> dict:

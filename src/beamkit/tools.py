@@ -1,10 +1,9 @@
 """The beamkit tools. Orchestration only: naming, decks, compose, records
 do the work; bridge talks to prodtools."""
 import json
-import os
 import sys
 
-from beamkit import __version__, beamfile, bridge, compose, decks, identity, naming, paths, records
+from beamkit import __version__, beamfile, bridge, compose, decks, identity, naming, paths, publishing, records
 from beamkit.decks import DEFAULT_DECK_URL
 
 SLICE_MAX = 10000
@@ -280,28 +279,24 @@ def beamline_outputs(run_id) -> dict:
 
 
 def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=False,
-                  location=None, confirm=False) -> dict:
+                  location=None, confirm=False, label=None) -> dict:
     """A BLTrackFile from whatever nts files the run has in SAM. No
-    completeness check: pot counts the files that exist."""
+    completeness check: pot counts the files that exist. flavor selects
+    the cut table; label names the files and defaults to the flavor."""
     ident = _identity(run_as, confirm, writes=publish)
+    label = flavor if label is None else label
     try:
         resolved = beamfile.resolve_cuts(flavor, cuts)
+        beamfile.validate_label(label)
+        beamfile.validate_plane(plane)
     except beamfile.BeamfileError as e:
         raise ToolError(str(e)) from e
     if publish:
         location = location or ident.default_publish_location
-        if location not in compose.OUTLOCS:
-            raise ToolError(f"location must be one of {compose.OUTLOCS}, got {location!r}")
-        # knowable now; discovering it in the publish unwind costs hours of
-        # dCache reads and throws the built beam file away
         try:
-            available = bridge.push_file_available()
-        except bridge.BridgeError as e:
+            publishing.check_ready(location)
+        except publishing.PublishError as e:
             raise ToolError(f"make_beamfile(publish=True): {e}") from e
-        if not available:
-            raise ToolError("this prodtools has no push_file tool, so publish=True cannot succeed; "
-                            "make_beamfile works with publish=False only until prodtools-write "
-                            "gains push_file")
     rec = _load(run_id)
     # the file is NAMED from the record's identity and PUSHED as run_as; a
     # mismatch publishes one owner's name under the other account
@@ -311,10 +306,10 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
                         f"that name under the other identity. Pass run_as={rec.run_as!r}")
     out_dir = paths.beamfiles_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_txt = out_dir / f"{run_id}.{flavor}.txt"
-    out_json = out_dir / f"{run_id}.{flavor}.json"
+    out_txt = out_dir / f"{run_id}.{label}.txt"
+    out_json = out_dir / f"{run_id}.{label}.json"
     if out_txt.exists() or out_json.exists():
-        raise ToolError(f"{out_txt} exists; a beam file is never overwritten (pick another flavor label)")
+        raise ToolError(f"{out_txt} exists; a beam file is never overwritten (pick another label)")
     dataset = _dataset(rec)
     try:
         files = bridge.dataset_files(dataset, rec.outloc)
@@ -327,35 +322,19 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
         stats = beamfile.build([f["path"] for f in files], plane, resolved, out_txt)
     except beamfile.BeamfileError as e:
         raise ToolError(str(e)) from e
-    side = {"run_id": run_id, "flavor": flavor, "cuts": resolved, "plane": plane, "path": str(out_txt),
-            "sha256": stats["sha256"], "size": stats["size"], "rows": stats["rows_out"],
+    side = {"run_id": run_id, "flavor": flavor, "label": label, "cuts": resolved, "plane": plane,
+            "path": str(out_txt), "sha256": stats["sha256"], "size": stats["size"], "rows": stats["rows_out"],
             "rows_in": stats["rows_in"], "dropped": stats["dropped"],
             "pot": len(files) * rec.events_per_job, "n_files": len(files),
             "missing_indices": beamfile.missing_indices(present, rec.njobs),
             "source_files": [f["name"] for f in files], "sam_name": None, "location": None,
             "created": records.now_utc()}
     if publish:
-        sam_name = f"etc.{rec.owner}.{rec.tag}Beam-{flavor}.{rec.dsconf}.txt"
-        staged = out_dir / sam_name
-        linked = False
+        sam_name = f"etc.{rec.owner}.{rec.tag}Beam-{label}.{rec.dsconf}.txt"
         try:
-            os.link(out_txt, staged)
-            linked = True
-            bridge.push_file(staged, location, side["source_files"], run_as, confirm)
-        except Exception as e:
-            # only what THIS call created: an os.link that failed because the
-            # staged name was already there left someone else's file behind it
-            if linked:
-                try:
-                    staged.unlink()
-                except OSError:
-                    pass
-            try:
-                out_txt.unlink()
-            except OSError:
-                pass
-            raise ToolError(f"beam file discarded: publish failed, so this call left nothing new "
-                            f"behind; it can be retried: {e}") from e
+            publishing.publish(out_txt, out_dir / sam_name, location, side["source_files"], run_as, confirm)
+        except publishing.PublishError as e:
+            raise ToolError(str(e)) from e
         side["sam_name"], side["location"] = sam_name, location
     out_json.write_text(json.dumps(side, indent=2) + "\n")
     rec.beamfiles.append(side)

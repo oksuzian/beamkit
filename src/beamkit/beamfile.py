@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Iterable, Iterator, NamedTuple
 
 FLAVOR_RE = re.compile(r"^[a-z][a-z0-9]{0,15}$")
+LABEL_RE = FLAVOR_RE        # a label names the files; it defaults to the flavor
+PLANE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 CUT_KEYS = ("keep_pdg", "drop_pdg", "min_p_mev")
 DROP_KEYS = ("duplicate", "exotic", "keep_pdg", "drop_pdg", "min_p_mev", "pz_negative")
 EXOTIC_ABOVE = 1000000
@@ -85,6 +87,20 @@ def validate_cuts(cuts) -> dict:
             raise BeamfileError(f"min_p_mev[{k!r}] must be a non-negative number, got {v!r}")
         norm[pdg] = float(v)
     return {"keep_pdg": keep, "drop_pdg": drop, "min_p_mev": norm}
+
+
+def validate_label(label) -> str:
+    if not isinstance(label, str) or not LABEL_RE.match(label):
+        raise BeamfileError(f"label {label!r} must match {LABEL_RE.pattern}")
+    return label
+
+
+def validate_plane(plane) -> str:
+    """The NTuple/<plane> name handed to _read_plane's argv. Checked here so
+    a typo is refused before the dataset listing and the ana subprocess."""
+    if not isinstance(plane, str) or not PLANE_RE.match(plane):
+        raise BeamfileError(f"plane {plane!r} must match {PLANE_RE.pattern}")
+    return plane
 
 
 def resolve_cuts(flavor, cuts) -> dict:

@@ -216,3 +216,34 @@ def test_real_build_on_fixture(monkeypatch, beamkit_home):
     out = tools.make_beamfile("T.e470313", "ps", "self")
     assert Path(out["path"]).read_bytes() == (FIX / "reference_ps.txt").read_bytes()
     assert out["pot"] == 10 and out["missing_indices"] == []
+
+
+def test_label_names_the_files_and_flavor_names_the_cuts(fake, beamkit_home):
+    """flavor used to be both the cut preset and the permanent SAM label, so
+    dodging a local file collision by 'picking another flavor' renamed the
+    SAM artifact. The label is its own thing; it defaults to the flavor."""
+    _record()
+    out = tools.make_beamfile("T.e470313", "bm", "self", publish=True, label="run3")
+    assert out["flavor"] == "bm" and out["label"] == "run3" and out["cuts"] == beamfile.FLAVORS["bm"]
+    assert out["path"] == str(beamkit_home / "beamfiles" / "T.e470313.run3.txt")
+    assert out["sam_name"] == "etc.u.TBeam-run3.e470313.txt"
+    again = tools.make_beamfile("T.e470313", "bm", "self", label="run4")
+    assert again["sam_name"] is None and again["label"] == "run4"
+
+
+@pytest.mark.parametrize("bad", ["Run3", "3run", "a-b", "x" * 17, ""])
+def test_bad_label_refused_before_reading(fake, monkeypatch, bad):
+    _record()
+    monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: (_ for _ in ()).throw(AssertionError("read")))
+    with pytest.raises(tools.ToolError, match="label"):
+        tools.make_beamfile("T.e470313", "bm", "self", label=bad)
+
+
+@pytest.mark.parametrize("bad", ["", "Z 3712", "3712", "Z3712;rm", 7])
+def test_bad_plane_refused_before_reading(fake, monkeypatch, bad):
+    """plane goes straight into the reader's argv; a typo used to cost the
+    dataset listing plus an ana subprocess before _read_plane exited 3."""
+    _record()
+    monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: (_ for _ in ()).throw(AssertionError("read")))
+    with pytest.raises(tools.ToolError, match="plane"):
+        tools.make_beamfile("T.e470313", "bm", "self", plane=bad)
