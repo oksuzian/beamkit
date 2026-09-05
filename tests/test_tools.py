@@ -319,3 +319,26 @@ def test_run_beamline_refuses_non_dict_params(fake_bridge):
     with pytest.raises(tools.ToolError, match="params"):
         _run(params=[])
     assert fake_bridge["push_cnf"] == []
+
+
+def test_tick_needing_attention_is_a_state_not_a_footnote(fake_bridge, monkeypatch):
+    """prodtools rc=2 means held rows or exhausted recoveries. Filing it into
+    ticks[] and then writing state="submitted" made a run in trouble list
+    exactly like a healthy one."""
+    monkeypatch.setattr(tools.bridge, "tick", lambda run_as, campaign_id, confirm:
+                        {"rc": 2, "needs_attention": True, "campaign_id": campaign_id, "output": "held: 3\n"})
+    out = _run()
+    assert out["state"] == "needs_attention"
+    assert [r["run_id"] for r in tools.list_beamline_runs(state="needs_attention")["runs"]] == ["T.e470313"]
+    assert tools.list_beamline_runs(state="submitted")["runs"] == []
+
+
+def test_clean_tick_after_attention_returns_to_submitted(fake_bridge, monkeypatch):
+    monkeypatch.setattr(tools.bridge, "tick", lambda run_as, campaign_id, confirm:
+                        {"rc": 2, "needs_attention": True, "campaign_id": campaign_id, "output": ""})
+    _run()
+    monkeypatch.setattr(tools.bridge, "tick", lambda run_as, campaign_id, confirm:
+                        {"rc": 0, "needs_attention": False, "campaign_id": campaign_id, "output": ""})
+    out = tools.make_recoveries("T.e470313", "self")
+    assert out["needs_attention"] is False
+    assert records.load("T.e470313", paths.runs_dir()).state == "submitted"

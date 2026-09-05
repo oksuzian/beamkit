@@ -6,7 +6,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-STATES = ("enqueue_failed", "created", "submitted")
+# needs_attention: the last tick returned prodtools rc=2 (held rows, exhausted
+# recoveries); a clean tick returns the run to submitted.
+STATES = ("enqueue_failed", "created", "submitted", "needs_attention")
 
 
 class RecordError(RuntimeError):

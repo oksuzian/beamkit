@@ -71,7 +71,7 @@ def create_mcp_server():
     def beamline_status(run_id: str) -> dict:
         return tools.beamline_status(run_id=run_id)
 
-    @mcp.tool(name="list_beamline_runs", description="Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted.")
+    @mcp.tool(name="list_beamline_runs", description="Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention.")
     def list_beamline_runs(state: Optional[str] = None) -> dict:
         return tools.list_beamline_runs(state=state)
 

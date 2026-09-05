@@ -147,12 +147,16 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     rec.datasets, rec.prodtools_datasets = [_dataset(rec)], list(pushed["datasets"])
     records.save(rec, runs_dir)
     if submit:
-        _tick_into(rec, run_as, confirm, runs_dir,
-                   failure=f"run {run_id}: campaign {rec.campaign_id} was created but the first tick failed; "
+        t = _tick_into(rec, run_as, confirm, runs_dir,
+                       failure=f"run {run_id}: campaign {rec.campaign_id} was created but the first tick failed; "
                            f"call make_recoveries({run_id!r}, {run_as!r}) to submit it")
-        rec.state = "submitted"
+        _state_after_tick(rec, t)
         records.save(rec, runs_dir)
     return rec.to_dict()
+
+
+def _state_after_tick(rec, tick):
+    rec.state = "needs_attention" if tick["needs_attention"] else "submitted"
 
 
 def _tick_into(rec, run_as, confirm, runs_dir, failure):
@@ -185,7 +189,7 @@ def make_recoveries(run_id, run_as, confirm=False) -> dict:
         raise ToolError(f"run {run_id} has no campaign (state {rec.state!r}); nothing to recover")
     t = _tick_into(rec, run_as, confirm, paths.runs_dir(),
                    failure=f"run {run_id}: tick of campaign {rec.campaign_id} failed")
-    rec.state = "submitted"
+    _state_after_tick(rec, t)
     records.save(rec, paths.runs_dir())
     return {"run_id": run_id, "campaign_id": rec.campaign_id, "rc": t["rc"],
             "needs_attention": t["needs_attention"], "output": t["output"], "ledger_wide": True,
