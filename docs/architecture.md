@@ -6,10 +6,10 @@ does not have for G4beamline: a reproducible pin of the deck, a name derived
 from that pin, an entry JSON composed from it, and a beam-file builder for
 the ntuples the run produces.
 
-Everything in `src/beamkit/` is one of four things: a rule (naming, compose),
-a boundary (bridge, server), a store (paths, records), or a payload
-transformer (decks, beamfile, `_read_plane`). `tools.py` is the only module
-that orchestrates; the rest are leaves it calls.
+Everything in `src/beamkit/` is one of four things: a rule (identity, naming,
+compose), a seam (bridge, server), a store (paths, records), or a payload
+transformer (decks, beamfile, publishing, `_read_plane`). `tools.py` is the
+only module that orchestrates; the rest are leaves it calls.
 
 ## The layers
 
@@ -24,13 +24,15 @@ graph TB
         TOOLS["<b>tools.py</b><br/>The seven tools. Orchestration only:<br/>validate, then call the leaves in order."]
 
         subgraph rules["Rules — pure, no I/O"]
-            NAM["<b>naming.py</b><br/>desc = tag, dsconf = deck sha[:7],<br/>cnf name, owner, -NNN on collision"]
-            CMP["<b>compose.py</b><br/>the one-entry JSON<br/>json2jobdef consumes"]
+            IDN["<b>identity.py</b><br/>what run_as means: owner, ledger,<br/>confirm, what may ship"]
+            NAM["<b>naming.py</b><br/>every Mu2e name: run id, cnf,<br/>nts dataset, beam-file artifact"]
+            CMP["<b>compose.py</b><br/>validate every caller input, then<br/>the one-entry JSON json2jobdef consumes"]
         end
 
         subgraph payload["Payload"]
             DEK["<b>decks.py</b><br/>pin + materialize one<br/>G4BeamlineScripts commit"]
             BF["<b>beamfile.py</b><br/>cut table + BLTrackFile writer<br/>(MakeSource.py as a library)"]
+            PUB["<b>publishing.py</b><br/>link to the SAM name, push,<br/>unwind only what this call made"]
             RP["<b>_read_plane.py</b><br/>standalone; runs under the<br/>ana interpreter, uproot only"]
         end
 
@@ -50,8 +52,9 @@ graph TB
     end
 
     MCP --> SRV --> TOOLS
-    TOOLS --> NAM & CMP & DEK & BF & REC & PTH
+    TOOLS --> IDN & NAM & CMP & DEK & BF & PUB & REC & PTH
     TOOLS --> BRG
+    PUB --> BRG
     BF -.->|subprocess| RP
     DEK -.->|git| GIT
     BRG --> PT
@@ -73,17 +76,24 @@ how the test suite runs.
 
 | File | Lines | Purpose |
 | --- | --- | --- |
-| `server.py` | 103 | FastMCP registration for the seven tools. Hand-written wrappers whose signatures are held to `tools.py`'s by an AST test. |
-| `tools.py` | 321 | `run_beamline`, `make_recoveries`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Validates up front, then delegates. |
-| `bridge.py` | 98 | Lazy, in-function imports of prodtools, keyed off `BEAMKIT_PRODTOOLS_ROOT`. Converts every prodtools failure into `BridgeError`. |
-| `beamfile.py` | 231 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), the dedupe and structural cuts, and the atomic BLTrackFile writer. |
+| `server.py` | 105 | FastMCP registration for the seven tools. Hand-written wrappers whose signatures are held to `tools.py`'s by an AST test. |
+| `tools.py` | 350 | `run_beamline`, `make_recoveries`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, then delegates. |
+| `bridge.py` | 103 | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
+| `beamfile.py` | 229 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
 | `decks.py` | 108 | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
-| `records.py` | 86 | The `RunRecord` dataclass and its atomic save/load. Deliberately thin: prodtools' ledger is the system of record for submission state. |
-| `naming.py` | 60 | Every Mu2e name beamkit produces, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
-| `compose.py` | 62 | Builds and validates the single-entry JSON `json2jobdef` consumes. |
+| `records.py` | 88 | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`. prodtools' ledger is the system of record for submission state. |
+| `identity.py` | 77 | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
+| `compose.py` | 70 | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
+| `naming.py` | 66 | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
+| `publishing.py` | 53 | The publish step of `make_beamfile`: knowable-up-front preconditions, hard link to the SAM name, push, and an unwind that discards only what this call created. Tested against a fake push with nothing built. |
 | `_read_plane.py` | 40 | Prints one ntuple plane as TSV. Runs under a *different* interpreter (ana 2.8.0, for uproot) and imports nothing from beamkit. |
 | `paths.py` | 23 | `$BEAMKIT_HOME` and the three directories under it. |
 | `__init__.py` | 2 | Version. |
+
+The test suite fakes every prodtools symbol, so one more test holds the
+bridge seam honest: with `BEAMKIT_PRODTOOLS_ROOT` naming a checkout,
+`tests/test_bridge_contract.py` imports the real modules in a subprocess and
+binds every call `bridge.py` makes to the real signature. It skips otherwise.
 
 ## Submitting a run
 
@@ -98,7 +108,7 @@ sequenceDiagram
     participant P as prodtools
 
     U->>T: tag, deck_ref, run_as, njobs…
-    Note over T: validate FIRST — run_as/confirm,<br/>outloc vs run_as, slice cap 10000.<br/>No dsconf burned, no record written.
+    Note over T: identity.resolve, then compose.validate_inputs,<br/>outloc vs identity, slice cap 10000.<br/>No deck fetched, no dsconf burned, no record written.
     T->>D: resolve_ref + materialize
     D-->>T: DeckPin(sha, dir)
     T->>N: allocate_dsconf(sha[:7])
@@ -123,13 +133,25 @@ mid-flight still leaves something to recover from.
 Nothing advances on its own afterwards. `make_recoveries` runs one prodtools
 tick — verify, resubmit missing indices, feed the next slice — and that pass is
 ledger-wide, so under `run_as="mu2epro"` it also advances every other active
-production campaign.
+production campaign. While the campaign is `active` the tick is scoped to it.
+prodtools marks a campaign `complete` the moment its last slice is submitted,
+rows still verifying, and refuses a scoped tick on it; from then on
+`make_recoveries` runs the bare tick, whose top-up also feeds every other
+active campaign, and the result says which form ran. A tick that returns
+prodtools' "needs attention" puts the run in state `needs_attention` until a
+clean one returns it to `submitted`.
+
+`run_beamline` is not atomic across its two prodtools calls, and says what a
+failure left behind. A push that raised after the cnf reached SAM and the
+campaign was created adopts that campaign into the record (state `created`)
+so `make_recoveries` submits it; a push that never reached SAM leaves the
+dsconf free and the run dir retryable in place.
 
 ## Building a beam file
 
 ```mermaid
 graph LR
-    A["make_beamfile(run_id, flavor)"] --> B{"validate:<br/>flavor, location,<br/>identity, push_file"}
+    A["make_beamfile(run_id, flavor, label)"] --> B{"validate:<br/>identity, flavor, label, plane,<br/>location, push_file"}
     B -->|refused| X["ToolError —<br/>nothing read,<br/>nothing written"]
     B -->|ok| C["bridge.dataset_files<br/>→ whatever nts exist"]
     C --> D["iter_plane_rows<br/>subprocess: ana python"]
@@ -137,7 +159,7 @@ graph LR
     E --> F["write_rows<br/>atomic .part → rename"]
     F --> G["sidecar .json<br/>+ appended to run record"]
     G --> H{"publish?"}
-    H -->|yes| I["hard link as<br/>etc.&lt;owner&gt;.&lt;tag&gt;Beam-&lt;flavor&gt;.&lt;dsconf&gt;.txt<br/>→ bridge.push_file"]
+    H -->|yes| I["publishing.publish: hard link as<br/>etc.&lt;owner&gt;.&lt;tag&gt;Beam-&lt;label&gt;.&lt;dsconf&gt;.txt<br/>→ bridge.push_file, unwind on failure"]
 ```
 
 A beam file is always built from whatever the run has produced so far — it
@@ -159,3 +181,7 @@ because on a large run that read is hours long.
   prodtools.
 - **prodtools owns submission state.** The run record holds the pin, the
   composed parameters and the beam files; it does not duplicate the ledger.
+- **One reader per fact.** `run_as` is interpreted in `identity.py`, every
+  Mu2e name is spelled in `naming.py`, every caller input is checked in
+  `compose.validate_inputs`, and `BEAMKIT_PRODTOOLS_DIR` is read in one
+  function. A rule that needs a second home is a rule that will drift.
