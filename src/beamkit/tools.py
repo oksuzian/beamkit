@@ -133,7 +133,7 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
                               events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
     except (naming.NamingError, compose.ComposeError) as e:
         raise ToolError(str(e)) from e
-    run_id = f"{tag}.{dsconf}"
+    run_id = naming.run_id(tag, dsconf)
     runs_dir = paths.runs_dir()
     rdir = records.run_dir(runs_dir, run_id)
     if rdir.exists() and not _is_retryable_run_dir(run_id, runs_dir):
@@ -155,8 +155,6 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
         records.save(rec, runs_dir)
         raise ToolError(f"run {run_id}: push_cnf failed ({e}){outcome}") from e
     rec.campaign_id, rec.tarball = pushed["campaign_id"], pushed["tarball"]
-    # prodtools echoes the entry's outloc key ("nts.*.root"), a glob, not a name;
-    # the dataset this run actually writes is the one _dataset composes.
     rec.datasets, rec.prodtools_datasets = [_dataset(rec)], list(pushed["datasets"])
     # the campaign's njobs is what missing_indices is measured against; the
     # requested count is only what we asked for
@@ -265,7 +263,7 @@ def list_beamline_runs(state=None) -> dict:
 
 
 def _dataset(rec):
-    return f"nts.{rec.owner}.{rec.tag}.{rec.dsconf}.root"
+    return naming.dataset(rec.owner, rec.tag, rec.dsconf)
 
 
 def beamline_outputs(run_id) -> dict:
@@ -330,7 +328,7 @@ def make_beamfile(run_id, flavor, run_as, plane="Z3712", cuts=None, publish=Fals
             "source_files": [f["name"] for f in files], "sam_name": None, "location": None,
             "created": records.now_utc()}
     if publish:
-        sam_name = f"etc.{rec.owner}.{rec.tag}Beam-{label}.{rec.dsconf}.txt"
+        sam_name = naming.beamfile_name(rec.owner, rec.tag, label, rec.dsconf)
         try:
             publishing.publish(out_txt, out_dir / sam_name, location, side["source_files"], run_as, confirm)
         except publishing.PublishError as e:

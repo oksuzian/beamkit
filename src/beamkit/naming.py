@@ -1,4 +1,6 @@
-"""Mu2e names for a beamkit run: desc = tag, dsconf = deck sha[:7]."""
+"""Every Mu2e name beamkit produces. desc = tag, dsconf = deck sha[:7];
+the run id, the cnf, the nts dataset and the beam-file artifact are all
+spelled here and nowhere else."""
 import re
 
 TAG_RE = re.compile(r"^[A-Za-z0-9]+$")
@@ -23,8 +25,22 @@ def dsconf_base(sha) -> str:
     return sha[:7]
 
 
+def run_id(desc, dsconf) -> str:
+    return f"{desc}.{dsconf}"
+
+
 def cnf_name(owner, desc, dsconf) -> str:
     return f"cnf.{owner}.{desc}.{dsconf}.0.tar"
+
+
+def dataset(owner, desc, dsconf) -> str:
+    """The nts dataset a run writes. prodtools' push_cnf reports the entry's
+    outloc key ("nts.*.root"), a glob, so the real name is composed here."""
+    return f"nts.{owner}.{desc}.{dsconf}.root"
+
+
+def beamfile_name(owner, desc, label, dsconf) -> str:
+    return f"etc.{owner}.{desc}Beam-{label}.{dsconf}.txt"
 
 
 def allocate_dsconf(owner, desc, base, taken, explicit=None) -> str:
