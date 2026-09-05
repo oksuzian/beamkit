@@ -66,3 +66,15 @@ def test_entry_params_none_means_no_params(deck):
     e = compose.entry(tag="T", dsconf="d", deck_dir=deck, main_input="Mu2E.in",
                       events_per_job=10, njobs=3, outloc="scratch", params=None)
     assert "g4bl_params" not in e
+
+
+def test_validate_inputs_is_the_one_rule_entry_also_applies(deck):
+    """tools calls validate_inputs before any side effect; entry calls the
+    same function, so there is one copy of the rule and two callers."""
+    assert compose.validate_inputs(events_per_job=10, njobs=3, outloc="scratch", params=None) == {}
+    assert compose.validate_inputs(events_per_job=10, njobs=3, outloc="tape", params={"epsMax": 0.01}) == {"epsMax": 0.01}
+    for kw in (dict(events_per_job=0), dict(njobs=0), dict(outloc="resilient"), dict(params=[])):
+        base = dict(events_per_job=10, njobs=3, outloc="scratch", params={})
+        base.update(kw)
+        with pytest.raises(compose.ComposeError, match=next(iter(kw))):
+            compose.validate_inputs(**base)

@@ -342,3 +342,16 @@ def test_clean_tick_after_attention_returns_to_submitted(fake_bridge, monkeypatc
     out = tools.make_recoveries("T.e470313", "self")
     assert out["needs_attention"] is False
     assert records.load("T.e470313", paths.runs_dir()).state == "submitted"
+
+
+@pytest.mark.parametrize("kw", [dict(events_per_job=0), dict(events_per_job=2.5), dict(njobs=0), dict(njobs=True)])
+def test_bad_counts_refused_before_the_deck_fetch_and_the_sam_probe(fake_bridge, monkeypatch, beamkit_home, kw):
+    """events_per_job used to be checked only by compose.entry, after the
+    deck was materialized and a cnf_exists probe had hit SAM. Every caller
+    input is refused before either."""
+    fetched = []
+    monkeypatch.setattr(tools.decks, "materialize", lambda *a: fetched.append(a))
+    with pytest.raises(tools.ToolError, match=next(iter(kw))):
+        _run(**kw)
+    assert fetched == [] and fake_bridge["cnf_exists"] == []
+    assert not (beamkit_home / "runs").exists()

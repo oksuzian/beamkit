@@ -33,11 +33,20 @@ def _positive_int(name, v) -> int:
     return v
 
 
-def entry(*, tag, dsconf, deck_dir, main_input, events_per_job, njobs, outloc, params) -> dict:
+def validate_inputs(*, events_per_job, njobs, outloc, params) -> dict:
+    """Every caller-supplied value an entry is built from, checked with no
+    filesystem or network access. tools runs this before the deck fetch and
+    the SAM probe; entry runs it again on its own arguments. One rule, two
+    callers. Returns the params dict."""
     _positive_int("events_per_job", events_per_job)
     _positive_int("njobs", njobs)
     if outloc not in OUTLOCS:
         raise ComposeError(f"outloc must be one of {OUTLOCS}, got {outloc!r}")
+    return validate_params({} if params is None else params)
+
+
+def entry(*, tag, dsconf, deck_dir, main_input, events_per_job, njobs, outloc, params) -> dict:
+    params = validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
     if not (Path(deck_dir) / main_input).is_file():
         raise ComposeError(f"main_input {main_input!r} not found in deck dir {deck_dir}")
     e = {
@@ -50,7 +59,6 @@ def entry(*, tag, dsconf, deck_dir, main_input, events_per_job, njobs, outloc, p
         "njobs": njobs,
         "outloc": {"nts.*.root": outloc},
     }
-    params = validate_params({} if params is None else params)
     if params:
         e["g4bl_params"] = params
     return e

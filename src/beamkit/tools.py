@@ -31,9 +31,9 @@ def _require(run_as, confirm):
 
 def _outloc(outloc, run_as):
     """beamkit holds the output location and the account at the same moment,
-    so it can refuse the pair prodtools only discovers on the worker."""
-    if outloc not in compose.OUTLOCS:
-        raise ToolError(f"outloc must be one of {compose.OUTLOCS}, got {outloc!r}")
+    so it can refuse the pair prodtools only discovers on the worker.
+    Membership in OUTLOCS is compose.validate_inputs' rule; this is the
+    one that needs run_as."""
     if outloc == "disk" and run_as != "mu2epro":
         raise ToolError("outloc='disk' is /mu2e/persistent/datasets, where only mu2epro has "
                         "storage.modify: every worker would run g4bl to completion and then 403 in "
@@ -105,13 +105,12 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
                  main_input="Mu2E.in", outloc="scratch", dsconf=None, slice_size=None,
                  submit=True, confirm=False, deck_dir=None, deck_url=DEFAULT_DECK_URL) -> dict:
     _require(run_as, confirm)
-    _outloc(outloc, run_as)
     try:
         naming.validate_tag(tag)
-        params = compose.validate_params({} if params is None else params)
-        compose._positive_int("njobs", njobs)
+        params = compose.validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
     except (naming.NamingError, compose.ComposeError) as e:
         raise ToolError(str(e)) from e
+    _outloc(outloc, run_as)
     slice_size = _slice_size(slice_size, njobs)
     owner = naming.owner_for(run_as)
     pin = _pin(deck_ref, deck_dir, deck_url, run_as)
@@ -149,7 +148,7 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     if submit:
         t = _tick_into(rec, run_as, confirm, runs_dir,
                        failure=f"run {run_id}: campaign {rec.campaign_id} was created but the first tick failed; "
-                           f"call make_recoveries({run_id!r}, {run_as!r}) to submit it")
+                               f"call make_recoveries({run_id!r}, {run_as!r}) to submit it")
         _state_after_tick(rec, t)
         records.save(rec, runs_dir)
     return rec.to_dict()
