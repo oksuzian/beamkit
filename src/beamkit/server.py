@@ -1,11 +1,9 @@
-"""FastMCP wiring for beamkit. No logic here; tools.py holds it."""
+"""FastMCP wiring for beamkit: registers tools.py's functions as they are."""
 import logging
 import os
 import sys
-from typing import Optional
 
 from beamkit import tools
-from beamkit.decks import DEFAULT_DECK_URL
 
 INSTRUCTIONS = """
 beamkit: G4beamline production over the Mu2e prodtools g4bl runner.
@@ -36,62 +34,27 @@ Records live under BEAMKIT_HOME/runs/<run_id>/ (entry.json, run.json);
 beamline_status merges a record with prodtools campaign_status.
 """
 
-TOOL_FUNCTIONS = {
-    "run_beamline": tools.run_beamline,
-    "make_recoveries": tools.make_recoveries,
-    "beamline_status": tools.beamline_status,
-    "list_beamline_runs": tools.list_beamline_runs,
-    "beamline_outputs": tools.beamline_outputs,
-    "make_beamfile": tools.make_beamfile,
-    "get_server_info": tools.get_server_info,
+TOOLS = {
+    "run_beamline": "Pin a deck commit, register the cnf, create the campaign and submit the run through prodtools.",
+    "make_recoveries": "One prodtools tick for this run: verify, resubmit missing indices, feed unsubmitted slices. Ledger-wide recovery pass.",
+    "beamline_status": "Run record merged with prodtools campaign status.",
+    "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention.",
+    "beamline_outputs": "Files of the run's nts dataset with sizes and dCache paths.",
+    "make_beamfile": "Build a BLTrackFile beam file from the run's nts files; preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
+    "get_server_info": "beamkit version, prodtools root and commit, directories, limits.",
 }
-TOOL_NAMES = tuple(TOOL_FUNCTIONS)
+TOOL_NAMES = tuple(TOOLS)
 
 
 def create_mcp_server():
+    """The tools.py functions ARE the MCP tools: FastMCP builds each schema
+    from the function's annotations, so tools.py annotates every parameter
+    (an unannotated one would reach the client as a string)."""
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP("beamkit", instructions=INSTRUCTIONS)
-
-    @mcp.tool(name="run_beamline", description="Pin a deck commit, register the cnf, create the campaign and submit the run through prodtools.")
-    def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: Optional[dict] = None,
-                     events_per_job: int = 1000, njobs: int = 1, main_input: str = "Mu2E.in",
-                     outloc: str = "scratch", dsconf: Optional[str] = None, slice_size: Optional[int] = None,
-                     submit: bool = True, confirm: bool = False, deck_dir: Optional[str] = None,
-                     deck_url: str = DEFAULT_DECK_URL) -> dict:
-        return tools.run_beamline(tag=tag, deck_ref=deck_ref, run_as=run_as, params=params,
-                                  events_per_job=events_per_job, njobs=njobs, main_input=main_input,
-                                  outloc=outloc, dsconf=dsconf, slice_size=slice_size, submit=submit,
-                                  confirm=confirm, deck_dir=deck_dir, deck_url=deck_url)
-
-    @mcp.tool(name="make_recoveries", description="One prodtools tick for this run: verify, resubmit missing indices, feed unsubmitted slices. Ledger-wide recovery pass.")
-    def make_recoveries(run_id: str, run_as: str, confirm: bool = False) -> dict:
-        return tools.make_recoveries(run_id=run_id, run_as=run_as, confirm=confirm)
-
-    @mcp.tool(name="beamline_status", description="Run record merged with prodtools campaign status.")
-    def beamline_status(run_id: str) -> dict:
-        return tools.beamline_status(run_id=run_id)
-
-    @mcp.tool(name="list_beamline_runs", description="Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention.")
-    def list_beamline_runs(state: Optional[str] = None) -> dict:
-        return tools.list_beamline_runs(state=state)
-
-    @mcp.tool(name="beamline_outputs", description="Files of the run's nts dataset with sizes and dCache paths.")
-    def beamline_outputs(run_id: str) -> dict:
-        return tools.beamline_outputs(run_id=run_id)
-
-    @mcp.tool(name="make_beamfile", description="Build a BLTrackFile beam file from the run's nts files; preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.")
-    def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712",
-                      cuts: Optional[dict] = None, publish: bool = False,
-                      location: Optional[str] = None, confirm: bool = False,
-                      label: Optional[str] = None) -> dict:
-        return tools.make_beamfile(run_id=run_id, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
-                                   publish=publish, location=location, confirm=confirm, label=label)
-
-    @mcp.tool(name="get_server_info", description="beamkit version, prodtools root and commit, directories, limits.")
-    def get_server_info() -> dict:
-        return tools.get_server_info()
-
+    for name, description in TOOLS.items():
+        mcp.tool(name=name, description=description)(getattr(tools, name))
     return mcp
 
 

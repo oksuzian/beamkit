@@ -2,16 +2,16 @@
 so the rest of beamkit, and every unit test, runs with prodtools absent.
 
 Wraps prodtools' own MCP tool functions in-process (their gates included)
-plus three read-only helpers from prodtools utils. The only subprocess
-here is `git rev-parse` in prodtools_info; no ledger access."""
-import subprocess
+plus three read-only helpers from prodtools utils. No ledger access."""
+from beamkit import BeamkitError
+from beamkit.decks import DeckError, _git
 
 _HINT = ("prodtools is not importable here. Start beamkit through "
          "scripts/start_mcp.sh with BEAMKIT_PRODTOOLS_ROOT set to a prodtools "
          "checkout whose mcp/.venv is installed")
 
 
-class BridgeError(RuntimeError):
+class BridgeError(BeamkitError):
     pass
 
 
@@ -95,9 +95,7 @@ def prodtools_info() -> dict:
     runner = _import("prodtools_mcp_write.runner")
     root = runner.REPO_ROOT
     try:
-        proc = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL)
-        commit = proc.stdout.strip() if proc.returncode == 0 else None
-    except OSError:
-        commit = None
+        commit = _git("rev-parse", "HEAD", cwd=root)
+    except (DeckError, OSError):
+        commit = None       # a cvmfs release is not a git checkout
     return {"root": root, "commit": commit}

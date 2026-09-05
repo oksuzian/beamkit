@@ -11,11 +11,13 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from beamkit import BeamkitError
+
 RUN_AS = ("self", "mu2epro")
 DEV_DIR_VAR = "BEAMKIT_PRODTOOLS_DIR"
 
 
-class IdentityError(ValueError):
+class IdentityError(BeamkitError):
     pass
 
 

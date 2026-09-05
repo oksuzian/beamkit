@@ -77,8 +77,7 @@ Everything lives under `BEAMKIT_HOME` (default
   prodtools' `push_cnf`.
 - `runs/<run_id>/run.json` — the run record: tag, dsconf, owner,
   run_as, deck pin, params, campaign_id, tarball, datasets (the
-  resolved `nts.<owner>.<desc>.<dsconf>.root`), prodtools_datasets
-  (prodtools' raw return, the entry's outloc glob), ticks, prodtools
+  resolved `nts.<owner>.<desc>.<dsconf>.root`), ticks, prodtools
   provenance, and any beam files built from this run.
 - `beamfiles/` — beam files built by `make_beamfile`
   (`<run_id>.<label>.txt` + `.json` sidecar; the label defaults to the

@@ -153,7 +153,8 @@ def test_prodtools_info_reports_root_and_commit(fake_prodtools, tmp_path):
 def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path, monkeypatch):
     def raise_missing(*a, **k):
         raise FileNotFoundError("git")
-    monkeypatch.setattr(bridge.subprocess, "run", raise_missing)
+    from beamkit import decks
+    monkeypatch.setattr(decks.subprocess, "run", raise_missing)
     assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None}
 
 

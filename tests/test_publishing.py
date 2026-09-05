@@ -52,7 +52,7 @@ def test_check_ready_needs_push_file(monkeypatch):
         publishing.check_ready("scratch")
     monkeypatch.setattr(bridge, "push_file_available",
                         lambda: (_ for _ in ()).throw(bridge.BridgeError("prodtools is not importable here")))
-    with pytest.raises(publishing.PublishError, match="not importable"):
+    with pytest.raises(bridge.BridgeError, match="not importable"):
         publishing.check_ready("scratch")
     monkeypatch.setattr(bridge, "push_file_available", lambda: True)
     publishing.check_ready("tape")

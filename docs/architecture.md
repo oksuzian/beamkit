@@ -20,7 +20,7 @@ graph TB
     end
 
     subgraph beamkit["beamkit"]
-        SRV["<b>server.py</b><br/>FastMCP wiring — seven tool wrappers.<br/>No logic. Imports mcp only inside<br/>create_mcp_server()."]
+        SRV["<b>server.py</b><br/>FastMCP wiring — registers tools.py's<br/>functions as they are. Imports mcp only<br/>inside create_mcp_server()."]
         TOOLS["<b>tools.py</b><br/>The seven tools. Orchestration only:<br/>validate, then call the leaves in order."]
 
         subgraph rules["Rules — pure, no I/O"]
@@ -76,19 +76,19 @@ how the test suite runs.
 
 | File | Lines | Purpose |
 | --- | --- | --- |
-| `server.py` | 105 | FastMCP registration for the seven tools. Hand-written wrappers whose signatures are held to `tools.py`'s by an AST test. |
-| `tools.py` | 350 | `run_beamline`, `make_recoveries`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, then delegates. |
-| `bridge.py` | 103 | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
-| `beamfile.py` | 229 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
-| `decks.py` | 108 | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
-| `records.py` | 88 | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`. prodtools' ledger is the system of record for submission state. |
-| `identity.py` | 77 | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
-| `compose.py` | 70 | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
-| `naming.py` | 66 | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
-| `publishing.py` | 53 | The publish step of `make_beamfile`: knowable-up-front preconditions, hard link to the SAM name, push, and an unwind that discards only what this call created. Tested against a fake push with nothing built. |
+| `server.py` | 68 | FastMCP registration: a name→description table, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
+| `tools.py` | 296 | `run_beamline`, `make_recoveries`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
+| `bridge.py` | 101 | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
+| `beamfile.py` | 231 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
+| `decks.py` | 109 | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
+| `records.py` | 87 | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`. prodtools' ledger is the system of record for submission state. |
+| `identity.py` | 79 | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
+| `compose.py` | 72 | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
+| `naming.py` | 68 | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
+| `publishing.py` | 49 | The publish step of `make_beamfile`: knowable-up-front preconditions, hard link to the SAM name, push, and an unwind that discards only what this call created. Tested against a fake push with nothing built. |
 | `_read_plane.py` | 40 | Prints one ntuple plane as TSV. Runs under a *different* interpreter (ana 2.8.0, for uproot) and imports nothing from beamkit. |
 | `paths.py` | 23 | `$BEAMKIT_HOME` and the three directories under it. |
-| `__init__.py` | 2 | Version. |
+| `__init__.py` | 8 | Version and `BeamkitError`, the base of every error beamkit raises. |
 
 The test suite fakes every prodtools symbol, so one more test holds the
 bridge seam honest: with `BEAMKIT_PRODTOOLS_ROOT` naming a checkout,
@@ -152,7 +152,7 @@ dsconf free and the run dir retryable in place.
 ```mermaid
 graph LR
     A["make_beamfile(run_id, flavor, label)"] --> B{"validate:<br/>identity, flavor, label, plane,<br/>location, push_file"}
-    B -->|refused| X["ToolError —<br/>nothing read,<br/>nothing written"]
+    B -->|refused| X["BeamkitError —<br/>nothing read,<br/>nothing written"]
     B -->|ok| C["bridge.dataset_files<br/>→ whatever nts exist"]
     C --> D["iter_plane_rows<br/>subprocess: ana python"]
     D --> E["filter_rows<br/>cuts + dedupe"]

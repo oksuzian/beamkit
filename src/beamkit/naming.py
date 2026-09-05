@@ -3,13 +3,15 @@ the run id, the cnf, the nts dataset and the beam-file artifact are all
 spelled here and nowhere else."""
 import re
 
+from beamkit import BeamkitError
+
 TAG_RE = re.compile(r"^[A-Za-z0-9]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 EXPLICIT_DSCONF_RE = re.compile(r"^[A-Za-z0-9-]+$")
 MAX_SUFFIX = 999
 
 
-class NamingError(ValueError):
+class NamingError(BeamkitError):
     pass
 
 

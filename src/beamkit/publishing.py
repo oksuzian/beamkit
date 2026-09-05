@@ -3,10 +3,10 @@ when that fails. Kept apart from the build so the unwind is tested against
 a fake push without reading a dataset or running the ana interpreter."""
 import os
 
-from beamkit import bridge, compose
+from beamkit import BeamkitError, bridge, compose
 
 
-class PublishError(RuntimeError):
+class PublishError(BeamkitError):
     pass
 
 
@@ -16,11 +16,7 @@ def check_ready(location) -> None:
     built beam file away."""
     if location not in compose.OUTLOCS:
         raise PublishError(f"location must be one of {compose.OUTLOCS}, got {location!r}")
-    try:
-        available = bridge.push_file_available()
-    except bridge.BridgeError as e:
-        raise PublishError(str(e)) from e
-    if not available:
+    if not bridge.push_file_available():
         raise PublishError("this prodtools has no push_file tool, so publish=True cannot succeed; "
                            "make_beamfile works with publish=False only until prodtools-write "
                            "gains push_file")

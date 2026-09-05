@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+from beamkit import BeamkitError
+
 OUTLOCS = ("scratch", "disk", "tape")
 # The worker sets these on every job (prodtools utils/runmu2e._g4bl_script);
 # an override would silently change every job's event range or output name.
@@ -10,7 +12,7 @@ G4BL_WORKER_PARAMS = ("First_Event", "Num_Events", "histoFile", "viewer")
 PARAM_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-class ComposeError(ValueError):
+class ComposeError(BeamkitError):
     pass
 
 

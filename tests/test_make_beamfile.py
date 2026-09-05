@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from beamkit import beamfile, paths, records, tools
+from beamkit import BeamkitError, beamfile, paths, records, tools
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -55,7 +55,7 @@ def test_partial_run_pot_and_missing(fake, beamkit_home):
 def test_zero_files_refused(fake, monkeypatch, beamkit_home):
     _record()
     monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: [])
-    with pytest.raises(tools.ToolError, match="no files"):
+    with pytest.raises(BeamkitError, match="no files"):
         tools.make_beamfile("T.e470313", "bm", "self")
     assert not (beamkit_home / "beamfiles").exists() or not list((beamkit_home / "beamfiles").iterdir())
 
@@ -63,7 +63,7 @@ def test_zero_files_refused(fake, monkeypatch, beamkit_home):
 def test_existing_beamfile_refused(fake, beamkit_home):
     _record()
     tools.make_beamfile("T.e470313", "bm", "self")
-    with pytest.raises(tools.ToolError, match="exists"):
+    with pytest.raises(BeamkitError, match="exists"):
         tools.make_beamfile("T.e470313", "bm", "self")
 
 
@@ -77,7 +77,7 @@ def test_custom_cuts_and_label(fake):
 def test_bad_flavor_refused_before_reading(fake, monkeypatch):
     _record()
     monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: (_ for _ in ()).throw(AssertionError("read")))
-    with pytest.raises(tools.ToolError, match="preset"):
+    with pytest.raises(BeamkitError, match="preset"):
         tools.make_beamfile("T.e470313", "nope", "self")
 
 
@@ -93,7 +93,7 @@ def test_publish_self_defaults_scratch(fake, beamkit_home):
 
 def test_publish_mu2epro_defaults_tape_needs_confirm(fake):
     _record(run_as="mu2epro", owner="mu2e")
-    with pytest.raises(tools.ToolError, match="confirm"):
+    with pytest.raises(BeamkitError, match="confirm"):
         tools.make_beamfile("T.e470313", "bm", "mu2epro", publish=True)
     out = tools.make_beamfile("T.e470313", "bm", "mu2epro", publish=True, confirm=True)
     assert out["location"] == "tape" and out["sam_name"] == "etc.mu2e.TBeam-bm.e470313.txt"
@@ -101,7 +101,7 @@ def test_publish_mu2epro_defaults_tape_needs_confirm(fake):
 
 def test_publish_as_mu2epro_from_a_self_run_refused(fake, beamkit_home):
     _record(run_as="self", owner="u")
-    with pytest.raises(tools.ToolError, match="run_as='self'.*run_as='mu2epro'"):
+    with pytest.raises(BeamkitError, match="run_as='self'.*run_as='mu2epro'"):
         tools.make_beamfile("T.e470313", "bm", "mu2epro", publish=True, confirm=True)
     assert fake["push_file"] == []
     bf_dir = beamkit_home / "beamfiles"
@@ -110,7 +110,7 @@ def test_publish_as_mu2epro_from_a_self_run_refused(fake, beamkit_home):
 
 def test_publish_as_self_from_a_mu2epro_run_refused(fake, beamkit_home):
     _record(run_as="mu2epro", owner="mu2e")
-    with pytest.raises(tools.ToolError, match="run_as='mu2epro'.*run_as='self'"):
+    with pytest.raises(BeamkitError, match="run_as='mu2epro'.*run_as='self'"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
     assert fake["push_file"] == []
     bf_dir = beamkit_home / "beamfiles"
@@ -126,7 +126,7 @@ def test_build_without_publish_ignores_the_identity(fake):
 
 def test_publish_bad_location(fake, beamkit_home):
     _record()
-    with pytest.raises(tools.ToolError, match="location"):
+    with pytest.raises(BeamkitError, match="location"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True, location="resilient")
     assert fake["push_file"] == []
     assert not (beamkit_home / "beamfiles").exists() or not list((beamkit_home / "beamfiles").iterdir())
@@ -141,7 +141,7 @@ def test_publish_without_push_file_refused_before_any_read_or_build(fake, monkey
                         lambda ds, loc: (_ for _ in ()).throw(AssertionError("read the dataset")))
     monkeypatch.setattr(tools.beamfile, "build",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("built the beam file")))
-    with pytest.raises(tools.ToolError, match="publish=False"):
+    with pytest.raises(BeamkitError, match="publish=False"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
     assert fake["push_file"] == []
     bf_dir = beamkit_home / "beamfiles"
@@ -155,7 +155,7 @@ def test_publish_probe_failure_becomes_a_tool_error(fake, monkeypatch):
                         lambda: (_ for _ in ()).throw(bridge.BridgeError("prodtools is not importable here")))
     monkeypatch.setattr(tools.bridge, "dataset_files",
                         lambda ds, loc: (_ for _ in ()).throw(AssertionError("read the dataset")))
-    with pytest.raises(tools.ToolError, match="not importable"):
+    with pytest.raises(BeamkitError, match="not importable"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
 
 
@@ -165,7 +165,7 @@ def test_publish_failure_discards_beamfile_and_allows_retry(fake, monkeypatch, b
     def failing_push(path, location, parents, run_as, confirm):
         raise RuntimeError("push down")
     monkeypatch.setattr(tools.bridge, "push_file", failing_push)
-    with pytest.raises(tools.ToolError, match="discarded"):
+    with pytest.raises(BeamkitError, match="discarded"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
     bf_dir = beamkit_home / "beamfiles"
     names = {p.name for p in bf_dir.iterdir()} if bf_dir.exists() else set()
@@ -188,7 +188,7 @@ def test_publish_link_collision_keeps_the_file_it_did_not_create(fake, beamkit_h
     bf_dir.mkdir(parents=True, exist_ok=True)
     published = bf_dir / "etc.u.TBeam-bm.e470313.txt"
     published.write_text("the copy published by an earlier make_beamfile call\n")
-    with pytest.raises(tools.ToolError, match="discarded"):
+    with pytest.raises(BeamkitError, match="discarded"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)
     assert fake["push_file"] == []
     assert published.read_text() == "the copy published by an earlier make_beamfile call\n"
@@ -200,12 +200,12 @@ def test_publish_link_collision_keeps_the_file_it_did_not_create(fake, beamkit_h
     assert out["sam_name"] is None and out["location"] is None
 
 
-def test_dataset_files_bridge_error_becomes_tool_error(fake, monkeypatch):
+def test_dataset_files_bridge_error_reaches_the_caller_as_is(fake, monkeypatch):
     _record()
     from beamkit import bridge
     monkeypatch.setattr(tools.bridge, "dataset_files",
                         lambda ds, loc: (_ for _ in ()).throw(bridge.BridgeError("boom")))
-    with pytest.raises(tools.ToolError, match="dataset_files"):
+    with pytest.raises(bridge.BridgeError, match="boom"):
         tools.make_beamfile("T.e470313", "bm", "self")
 
 
@@ -235,7 +235,7 @@ def test_label_names_the_files_and_flavor_names_the_cuts(fake, beamkit_home):
 def test_bad_label_refused_before_reading(fake, monkeypatch, bad):
     _record()
     monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: (_ for _ in ()).throw(AssertionError("read")))
-    with pytest.raises(tools.ToolError, match="label"):
+    with pytest.raises(BeamkitError, match="label"):
         tools.make_beamfile("T.e470313", "bm", "self", label=bad)
 
 
@@ -245,5 +245,5 @@ def test_bad_plane_refused_before_reading(fake, monkeypatch, bad):
     dataset listing plus an ana subprocess before _read_plane exited 3."""
     _record()
     monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: (_ for _ in ()).throw(AssertionError("read")))
-    with pytest.raises(tools.ToolError, match="plane"):
+    with pytest.raises(BeamkitError, match="plane"):
         tools.make_beamfile("T.e470313", "bm", "self", plane=bad)

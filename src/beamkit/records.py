@@ -6,12 +6,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from beamkit import BeamkitError
+
 # needs_attention: the last tick returned prodtools rc=2 (held rows, exhausted
 # recoveries); a clean tick returns the run to submitted.
 STATES = ("enqueue_failed", "created", "submitted", "needs_attention")
 
 
-class RecordError(RuntimeError):
+class RecordError(BeamkitError):
     pass
 
 
@@ -35,15 +37,12 @@ class RunRecord:
     state: str
     campaign_id: int | None = None
     tarball: str | None = None
-    datasets: list = field(default_factory=list)          # resolved nts.<owner>.<desc>.<dsconf>.root
-    prodtools_datasets: list = field(default_factory=list)  # prodtools' raw return: the outloc glob
+    datasets: list = field(default_factory=list)   # nts.<owner>.<desc>.<dsconf>.root
     created: str = ""
     ticks: list = field(default_factory=list)
     prodtools: dict = field(default_factory=dict)
     beamkit_version: str = ""
-    sweep_id: str | None = None
     beamfiles: list = field(default_factory=list)
-    beamfile_in: str | None = None
     error: str | None = None
 
     def to_dict(self) -> dict:
