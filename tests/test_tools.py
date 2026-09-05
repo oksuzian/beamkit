@@ -39,6 +39,11 @@ def fake_bridge(monkeypatch, deck):
     monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
     monkeypatch.setattr(tools.bridge, "prodtools_info", lambda: {"root": "/pt", "commit": "c" * 40, "dev_dir": None})
     monkeypatch.setattr(tools.bridge, "campaign_status", lambda campaign_id, mine: {"campaign_id": campaign_id, "mine": mine})
+    calls["campaigns"] = []
+    def campaigns(mine):
+        calls["campaigns"].append(mine)
+        return [{"id": 7, "state": "active", "tarball": "cnf.u.T.e470313.0.tar", "cursor": 0}]
+    monkeypatch.setattr(tools.bridge, "campaigns", campaigns)
     monkeypatch.setattr(tools.bridge, "dataset_files", lambda ds, loc: [{"name": f"{ds[:-5]}.00000000.root", "index": 0, "size": 1, "path": f"/pnfs/{loc}/x"}])
     from beamkit import decks
     monkeypatch.setattr(tools.decks, "materialize",
@@ -371,3 +376,41 @@ def test_campaign_njobs_disagreeing_with_the_request_is_refused_before_the_tick(
     rec = records.load("T.e470313", paths.runs_dir())
     assert rec.campaign_id == 7 and rec.njobs == 4 and rec.state == "created"
     assert fake_bridge["tick"] == []
+
+
+def test_make_recoveries_ticks_the_campaign_while_it_is_active(fake_bridge):
+    _run()
+    out = tools.make_recoveries("T.e470313", "self")
+    assert out["tick_scope"] == "campaign" and out["campaign_state"] == "active"
+    assert fake_bridge["tick"][-1]["campaign_id"] == 7 and fake_bridge["campaigns"][-1] is True
+
+
+def test_make_recoveries_uses_the_bare_tick_once_the_campaign_is_complete(fake_bridge, monkeypatch):
+    """prodtools flips a campaign to 'complete' the moment its last slice is
+    submitted, while its rows still verify, and refuses a scoped tick on it
+    as 'not active'. The bare tick is the only form that reaches those
+    rows; its top-up also feeds every other active campaign in the ledger,
+    and the result says so."""
+    _run()
+    monkeypatch.setattr(tools.bridge, "campaigns", lambda mine: [{"id": 7, "state": "complete"}])
+    out = tools.make_recoveries("T.e470313", "self")
+    assert out["tick_scope"] == "ledger" and out["campaign_state"] == "complete"
+    assert fake_bridge["tick"][-1] == dict(run_as="self", campaign_id=None, confirm=False)
+    assert "every active campaign" in out["note"]
+
+
+def test_make_recoveries_refuses_a_campaign_missing_from_the_ledger(fake_bridge, monkeypatch):
+    _run()
+    monkeypatch.setattr(tools.bridge, "campaigns", lambda mine: [])
+    with pytest.raises(tools.ToolError, match="campaign 7 is not in"):
+        tools.make_recoveries("T.e470313", "self")
+    assert len(fake_bridge["tick"]) == 1
+
+
+def test_make_recoveries_refuses_the_other_identity(fake_bridge):
+    """The ledger consulted follows the record's identity and the tick runs
+    as the caller's; the two must be the same account."""
+    _run()
+    with pytest.raises(tools.ToolError, match="run_as='self'"):
+        tools.make_recoveries("T.e470313", "mu2epro", confirm=True)
+    assert len(fake_bridge["tick"]) == 1

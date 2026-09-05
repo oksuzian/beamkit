@@ -26,6 +26,8 @@ def fake_prodtools(monkeypatch, tmp_path):
     pkg.tools, pkg.runner = tools, runner
     status = types.ModuleType("prodtools_mcp.tools.status")
     status.campaign_status = lambda **kw: {"called": kw}
+    status.list_campaigns = lambda **kw: {"count": 1, "db_path": "/db", "called": kw,
+                                          "campaigns": [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]}
     sw = types.ModuleType("utils.samweb_wrapper")
     sw.locate_file = lambda name: "enstore:/x" if name.endswith("e470313.0.tar") else ""
     sw.file_sizes_in_dataset = lambda ds: {"nts.u.T.e470313.00000002.root": 20, "nts.u.T.e470313.00000000.root": 10}
@@ -162,3 +164,8 @@ def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path
 def test_prodtools_info_empty_env_reports_none(fake_prodtools, monkeypatch):
     monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "")
     assert bridge.prodtools_info()["dev_dir"] is None
+
+
+def test_campaigns_is_the_ledger_only_listing(fake_prodtools):
+    out = bridge.campaigns(mine=True)
+    assert out == [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]

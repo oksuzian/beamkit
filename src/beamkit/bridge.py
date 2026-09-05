@@ -62,6 +62,13 @@ def campaign_status(campaign_id, mine) -> dict:
     return status.campaign_status(campaign_id=campaign_id, mine=mine)
 
 
+def campaigns(mine) -> list[dict]:
+    """Every campaign in the caller's ledger (personal for mine=True,
+    production otherwise) with its state. Ledger only, no network."""
+    status = _import("prodtools_mcp.tools.status")
+    return list(status.list_campaigns(mine=mine)["campaigns"])
+
+
 def cnf_exists(cnf_name) -> bool:
     sw = _import("utils.samweb_wrapper")
     return bool(sw.locate_file(cnf_name))

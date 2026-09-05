@@ -156,7 +156,8 @@ def run_beamline(tag, deck_ref=None, run_as="self", params=None, events_per_job=
     if submit:
         t = _tick_into(rec, run_as, confirm, runs_dir,
                        failure=f"run {run_id}: campaign {rec.campaign_id} was created but the first tick failed; "
-                               f"call make_recoveries({run_id!r}, {run_as!r}) to submit it")
+                               f"call make_recoveries({run_id!r}, {run_as!r}) to submit it",
+                       campaign_id=rec.campaign_id)
         _state_after_tick(rec, t)
         records.save(rec, runs_dir)
     return rec.to_dict()
@@ -166,9 +167,11 @@ def _state_after_tick(rec, tick):
     rec.state = "needs_attention" if tick["needs_attention"] else "submitted"
 
 
-def _tick_into(rec, run_as, confirm, runs_dir, failure):
+def _tick_into(rec, run_as, confirm, runs_dir, failure, campaign_id):
+    """One prodtools tick, filed into the record. campaign_id=None is the
+    bare tick: every active campaign in the ledger is topped up."""
     try:
-        t = bridge.tick(run_as, rec.campaign_id, confirm)
+        t = bridge.tick(run_as, campaign_id, confirm)
     except Exception as e:
         rec.error = f"{type(e).__name__}: {e}"
         records.save(rec, runs_dir)
@@ -187,20 +190,48 @@ def _load(run_id):
         raise ToolError(str(e)) from e
 
 
+def _campaign(campaign_id, mine) -> dict:
+    """This run's campaign as the ledger holds it. Missing is an error, not
+    None: a tick for a campaign the ledger does not know would be a no-op
+    reported as success."""
+    try:
+        camps = bridge.campaigns(mine)
+    except bridge.BridgeError as e:
+        raise ToolError(f"could not read the ledger: {e}") from e
+    for c in camps:
+        if c["id"] == campaign_id:
+            return c
+    raise ToolError(f"campaign {campaign_id} is not in the {'personal' if mine else 'production'} ledger")
+
+
 def make_recoveries(run_id, run_as, confirm=False) -> dict:
-    """One prodtools tick for this run's campaign. The recovery pass is
-    ledger-wide (prodtools scopes only the top-up); the result says so."""
+    """One prodtools tick for this run. While the campaign is active the tick
+    is scoped to it. Once prodtools has marked it complete (every slice
+    submitted, rows still verifying) a scoped tick is refused as not
+    active, so the bare tick is used: its verify/recovery pass reaches this
+    run's rows and its top-up feeds every other active campaign in the
+    ledger. The result names which form ran."""
     _require(run_as, confirm)
     rec = _load(run_id)
     if rec.campaign_id is None:
         raise ToolError(f"run {run_id} has no campaign (state {rec.state!r}); nothing to recover")
+    if run_as != rec.run_as:
+        raise ToolError(f"run {run_id} lives in the run_as={rec.run_as!r} ledger; tick it as that identity")
+    camp = _campaign(rec.campaign_id, mine=(rec.run_as == "self"))
+    scoped = camp["state"] == "active"
     t = _tick_into(rec, run_as, confirm, paths.runs_dir(),
-                   failure=f"run {run_id}: tick of campaign {rec.campaign_id} failed")
+                   failure=f"run {run_id}: tick of campaign {rec.campaign_id} failed",
+                   campaign_id=rec.campaign_id if scoped else None)
     _state_after_tick(rec, t)
     records.save(rec, paths.runs_dir())
-    return {"run_id": run_id, "campaign_id": rec.campaign_id, "rc": t["rc"],
-            "needs_attention": t["needs_attention"], "output": t["output"], "ledger_wide": True,
-            "note": "the verify/recovery pass covered every active campaign in this ledger, not only this run"}
+    return {"run_id": run_id, "campaign_id": rec.campaign_id, "campaign_state": camp["state"],
+            "rc": t["rc"], "needs_attention": t["needs_attention"], "output": t["output"],
+            "tick_scope": "campaign" if scoped else "ledger", "ledger_wide": True,
+            "note": ("the verify/recovery pass covered every active campaign in this ledger, not only this run"
+                     if scoped else
+                     f"campaign {rec.campaign_id} is {camp['state']!r}, so this was the bare tick: the "
+                     f"verify/recovery pass reached its rows and the top-up fed every active campaign in "
+                     f"this ledger")}
 
 
 def beamline_status(run_id) -> dict:
