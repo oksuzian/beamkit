@@ -296,7 +296,8 @@ def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dic
         raise BeamkitError(f"run {run_id}: 0 of {counts['expected']} nts files on CFS "
                            f"({counts['logs']} logs); nothing to build a beam file from")
     rd = rec.nersc["run_dir"]
-    stem = f"{rd}/beamfiles/etc.{rec.owner}.{rec.tag}Beam-{label}.{rec.dsconf}.0"
+    name = naming.beamfile_name(rec.owner, rec.tag, label, rec.dsconf)
+    stem = f"{rd}/beamfiles/{name[:-len('.txt')]}"
     local = records.run_dir(runs_dir, run_id) / "beamfiles"
     local.mkdir(exist_ok=True)
     job_py, job_sh = local / f"beamfile_job.{label}.py", local / f"beamfile.{label}.sh"
@@ -323,7 +324,7 @@ def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dic
     return entry
 
 
-SIDECAR_KEYS = ("sha256", "size", "rows", "rows_in", "dropped", "pot", "n_files", "missing_indices", "created")
+SIDECAR_KEYS = ("sha256", "size", "rows", "rows_in", "dropped", "pot", "n_files", "missing_indices")
 
 
 def _refresh_beamfiles(client, rec) -> None:

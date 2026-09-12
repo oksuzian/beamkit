@@ -84,6 +84,25 @@ def test_beamfile_job_failure_is_recorded(fake):
     assert bf["state"] == "failed" and bf["exit_code"] == 3
 
 
+def test_beamfile_job_failure_with_a_readable_sidecar_still_fails(fake):
+    """A Slurm job can end 'failed' even though its sidecar downloads and
+    parses fine (e.g. a non-zero exit after the JSON was already written);
+    the entry must still land 'failed', and the submission timestamp must
+    survive (it is not one of the sidecar fields copied in)."""
+    _run(njobs=1)
+    _land(fake, 0)
+    entry = tools.make_beamfile("T.e470313", "bm", "self", site="nersc")
+    side = {"run_id": "T.e470313", "flavor": "bm", "label": "bm", "cuts": {}, "plane": "Z3712",
+            "path": entry["path"], "sha256": "ab", "size": 9, "rows": 4,
+            "rows_in": 5, "dropped": {}, "pot": 10, "n_files": 1, "missing_indices": [], "source_files": ["x"],
+            "sam_name": None, "location": None, "created": "sidecar-time"}
+    fake.files[entry["sidecar"]] = json.dumps(side).encode()
+    fake.jobs["58197743"]["state"] = "failed"
+    fake.jobs["58197743"]["exit_code"] = 2
+    bf = tools.beamline_status("T.e470313")["record"]["beamfiles"][0]
+    assert bf["state"] == "failed" and bf["exit_code"] == 2 and bf["created"] == entry["created"]
+
+
 def test_label_is_never_reused(fake):
     _run(njobs=1)
     _land(fake, 0)
