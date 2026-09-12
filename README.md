@@ -4,10 +4,59 @@
 
 beamkit is the G4beamline (g4bl) production front end over the Mu2e
 prodtools `g4bl` runner: it owns deck pins, campaign composition, run
-records, and an MCP server that exposes seven tools to an agent or
+records, and an MCP server that exposes eight tools to an agent or
 user. It owns no worker code, no submission ledger, no jobsub, and no
 SAM writes of its own — every mutating call goes through prodtools'
 own MCP tool functions, in-process, with their gates intact.
+
+## Quick start
+
+### On a Mu2e gpvm (Fermilab grid or NERSC)
+
+Nothing to install. Add to the `.mcp.json` of the directory you start
+Claude Code in (or `~/.claude.json` for every directory):
+
+```json
+{"mcpServers": {"beamkit": {"command":
+  "/cvmfs/mu2e.opensciencegrid.org/bin/beamkit/current/scripts/beamkit-mcp-cvmfs"}}}
+```
+
+Start Claude Code, `/mcp` shows `beamkit` connected. Records, deck pins
+and beam files live under `/exp/mu2e/data/users/$USER/beamkit/`.
+
+For NERSC jobs, also do steps 1 and 3 of "NERSC from a laptop" below
+(sfapi client in `~/.sfapi`, `nersc.toml` in that beamkit directory).
+
+### On a laptop (NERSC only)
+
+```bash
+pip install git+https://github.com/oksuzian/beamkit.git@v0.3.0
+```
+
+then steps 1, 3 and 4 of "NERSC from a laptop". Records live in
+`~/.beamkit/`.
+
+### A session
+
+Ask in plain words; the agent picks the tool.
+
+| you say | tool called |
+|---|---|
+| "Is beamkit working?" | `get_server_info` -- both `backends` should say `available: true` |
+| "Run 100 g4bl jobs of 1000 events from deck tag v3 on NERSC" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", site="nersc", njobs=100, events_per_job=1000)` |
+| "Same on the grid" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", njobs=100, events_per_job=1000)` |
+| "How is run G4blBeam.e470313 doing?" | `beamline_status("G4blBeam.e470313")` |
+| "List my runs" | `list_beamline_runs()` |
+| "Where are the outputs?" | `beamline_outputs(run_id)` -- CFS paths for NERSC, dataset files for Fermilab |
+| "Build the bm beam file" | `make_beamfile(run_id, "bm", "self", site="nersc")` or without `site` on Fermilab |
+| "Submit the jobs I created with submit=False" | `submit_run(run_id, "self")` (NERSC only) |
+| "Recover the missing jobs" | `make_recoveries(run_id, "self")` (Fermilab only; NERSC has no recovery, rerun instead) |
+
+`run_as="self"` is always safe: your account, your scratch, your ledger.
+`run_as="mu2epro"` (Fermilab only) needs `confirm=True` and a hook
+prompt, and is refused on NERSC. `tag` is the Mu2e description token
+of the output dataset; `deck_ref` is a git tag or sha of the deck repo.
+Default deck repo: `https://github.com/Mu2e/G4BeamlineScripts`.
 
 ## Install
 
