@@ -141,8 +141,8 @@ is the `owner` key of `nersc.toml`, so a user with no Mu2e account gets
 names in the Mu2e grammar under their own name. The API's whoami
 endpoint, called with a client-credential token, reports the numeric
 NERSC account id (for example `{"username": "105241"}`), not the login,
-so it cannot supply the owner; `get_server_info` uses it for
-connectivity only.
+so it cannot supply the owner; nothing in beamkit calls it today except
+the live smoke test.
 `Identity` gains a `site` field; `identity.resolve` takes `site` and
 applies these rules. The record stores both.
 
@@ -199,7 +199,7 @@ before the backend dispatch is shared with the Fermilab path.
      "run_dir": ".../runs/<run_id>",
      "account": "m4599", "qos": "regular", "procs_per_node": 128,
      "jobs": [{"slurm_id": "58197742", "offset": 0, "count": 128, "submitted": "..."}],
-     "owner_login": "oksuzian"
+     "config": {"...": "the nersc.toml values the run was submitted with"}
    }
    ```
 
