@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 from beamkit import BeamkitError
+from beamkit.backends import SITES
 
 RUN_AS = ("self", "mu2epro")
-SITES = ("fermilab", "nersc")
 DEV_DIR_VAR = "BEAMKIT_PRODTOOLS_DIR"
 
 
