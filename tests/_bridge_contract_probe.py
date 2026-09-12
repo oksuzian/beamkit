@@ -84,6 +84,19 @@ for got, want in ((naming.cnf_name("u", "T", "e470313"),
                    jc.Mu2eName.build(tier="etc", owner="u", description="TBeam-bm", dsconf="e470313", sequencer="0", extension="txt"))):
     if got != want.filename:
         failures.append(f"naming {got!r} != Mu2eName.build {want.filename!r}")
+
+# The NERSC path runs no prodtools on the node, so beamkit carries the g4bl
+# recipe itself. Same inputs, byte-equal script, or the two have drifted.
+try:
+    import utils.runmu2e as runmu2e            # noqa: E402
+    from beamkit import nersc_templates        # noqa: E402
+    args = ("Mu2E.in", 11, 10, "/abs/nts.u.T.e470313.00000001.root", {"epsMax": "0.01", "Beam_File": "a b"})
+    theirs, ours = runmu2e._g4bl_script(*args[:4], params=args[4]), nersc_templates.g4bl_script(*args)
+    if theirs != ours:
+        failures.append(f"g4bl recipe drift:\nprodtools: {theirs!r}\nbeamkit:   {ours!r}")
+except ImportError as e:
+    failures.append(f"utils.runmu2e not importable for the g4bl recipe check: {e}")
+
 available = bridge.push_file_available()
 if available:
     bind(wtools, "push_file", {})
