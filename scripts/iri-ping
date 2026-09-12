@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Ping the NERSC IRI Facility API with the configured sfapi client.
+
+Usage: .venv/bin/python scripts/iri-ping [BEAMKIT_HOME]
+Prints one line per probe: the token, whoami, both resource listings,
+and the same token against the legacy Superfacility API, so a failure
+can be placed: oidc (client id/key/IP/expiry), the IRI facility adapter
+(500s while legacy works), or the facility itself.
+"""
+import sys
+from pathlib import Path
+
+import requests
+
+from beamkit import iri, nersc_config, paths
+
+home = Path(sys.argv[1]) if len(sys.argv) > 1 else paths.home()
+cfg = nersc_config.load(home)
+print(f"config    {nersc_config.config_path(home)}  client {cfg.client_id()}  key {cfg.key_file()}")
+
+try:
+    tok = iri.sfapi_token(cfg)
+    print("token     OK")
+except iri.IriError as e:
+    print(f"token     FAIL {e}")
+    sys.exit(1)
+
+client = iri.IriClient(cfg, token_provider=lambda: tok)
+probes = [
+    ("whoami", lambda: client.whoami()),
+    ("compute", lambda: client.resource_id("compute", "compute")),
+    ("cfs", lambda: client.resource_id("filesystem", "cfs")),
+    ("ls runs", lambda: len(client.ls(f"{cfg.base_dir}/runs"))),
+]
+ok = True
+for name, fn in probes:
+    try:
+        print(f"{name:9} OK {fn()}")
+    except iri.IriError as e:
+        ok = False
+        print(f"{name:9} FAIL {str(e)[:110]}")
+
+r = requests.get("https://api.nersc.gov/api/v1.2/status/perlmutter",
+                 headers={"Authorization": f"Bearer {tok}"}, timeout=30)
+print(f"legacy    {'OK' if r.ok else 'FAIL'} api.nersc.gov v1.2 status/perlmutter -> {r.status_code}")
+if not ok and r.ok:
+    print("verdict   client and facility fine; the IRI v2 adapter is failing -> consult@nersc.gov")
+elif not ok:
+    print("verdict   both APIs failing; check client (Iris) and NERSC status")
+else:
+    print("verdict   IRI API is up")
+sys.exit(0 if ok else 2)
