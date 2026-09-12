@@ -119,6 +119,29 @@ def test_missing_tomli_still_imports_and_gives_an_actionable_error(beamkit_home,
         importlib.reload(tools_mod)
 
 
+def test_dotted_owner_is_refused(beamkit_home, sfapi):
+    _write(beamkit_home, GOOD.format(sfapi=sfapi).replace('owner = "u"', 'owner = "first.last"'))
+    with pytest.raises(nc.ConfigError, match="owner") as e:
+        nc.load(beamkit_home)
+    assert "Mu2e name token" in str(e.value)
+
+
+def test_base_dir_outside_global_cfs_is_refused(beamkit_home, sfapi):
+    _write(beamkit_home, GOOD.format(sfapi=sfapi).replace(
+        'base_dir = "/global/cfs/cdirs/m4599/Users/u/beamkit"', 'base_dir = "/pscratch/sd/u/user/beamkit"'))
+    with pytest.raises(nc.ConfigError, match="base_dir") as e:
+        nc.load(beamkit_home)
+    assert "/global/cfs/" in str(e.value)
+
+
+def test_base_dir_with_a_quote_is_refused(beamkit_home, sfapi):
+    _write(beamkit_home, GOOD.format(sfapi=sfapi).replace(
+        'base_dir = "/global/cfs/cdirs/m4599/Users/u/beamkit"',
+        'base_dir = "/global/cfs/cdirs/m4599/Users/u\\"/beamkit"'))
+    with pytest.raises(nc.ConfigError, match="base_dir"):
+        nc.load(beamkit_home)
+
+
 def test_toml_import_guard_is_symmetric_on_py311(monkeypatch):
     """The >=3.11 branch imports stdlib tomllib; if that's ever missing
     (e.g. a stripped-down interpreter) it must convert to ConfigError too,

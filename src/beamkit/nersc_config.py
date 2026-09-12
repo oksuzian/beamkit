@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from beamkit import BeamkitError
+from beamkit import BeamkitError, naming
 
 REQUIRED = ("api", "sfapi_dir", "account", "base_dir", "qos", "owner")
 DEFAULTS = {
@@ -86,6 +86,30 @@ def _text(d, key):
     return v.strip()
 
 
+def _validate_owner(owner, path):
+    """owner names every file the run produces; the Fermilab path's owner is
+    always a login (naming.TAG_RE), and a dotted or otherwise irregular
+    NERSC owner breaks dot-field parsing downstream (the dsconf collision
+    probe, Mu2eName parsing at harvest) silently rather than loudly."""
+    if not naming.TAG_RE.match(owner):
+        raise ConfigError(f"{path}: owner must be a Mu2e name token, your NERSC login (got {owner!r})")
+    return owner
+
+
+def _validate_base_dir(base_dir, path):
+    """job.sh binds only /cvmfs and /global/cfs into the container; any
+    other base_dir passes config, layout and submit and fails only on the
+    node. Quotes/backslashes/whitespace break the double-quoted shell words
+    and the beamfile_job.py Python literal that embed it unescaped."""
+    if not base_dir.startswith("/") or any(c in base_dir for c in (" ", "\t", "\n", '"', "'", "\\")):
+        raise ConfigError(f"{path}: base_dir must be an absolute path with no whitespace, quotes or "
+                          f"backslashes, got {base_dir!r}")
+    if not base_dir.startswith("/global/cfs/"):
+        raise ConfigError(f"{path}: base_dir must start with /global/cfs/ (job.sh binds only /cvmfs and "
+                          f"/global/cfs into the container), got {base_dir!r}")
+    return base_dir
+
+
 def load(home) -> NerscConfig:
     path = config_path(home)
     if not path.is_file():
@@ -107,7 +131,9 @@ def load(home) -> NerscConfig:
     if isinstance(ppn, bool) or not isinstance(ppn, int) or ppn < 1:
         raise ConfigError(f"{path}: procs_per_node must be a positive integer, got {ppn!r}")
     return NerscConfig(api=_text(raw, "api").rstrip("/"), sfapi_dir=Path(_text(raw, "sfapi_dir")).expanduser(),
-                       account=_text(raw, "account"), base_dir=_text(raw, "base_dir").rstrip("/"),
-                       qos=_text(raw, "qos"), owner=_text(raw, "owner"), procs_per_node=ppn,
-                       image=raw.get("image", DEFAULTS["image"]),
-                       apptainer=raw.get("apptainer", DEFAULTS["apptainer"]))
+                       account=_text(raw, "account"),
+                       base_dir=_validate_base_dir(_text(raw, "base_dir").rstrip("/"), path),
+                       qos=_text(raw, "qos"), owner=_validate_owner(_text(raw, "owner"), path),
+                       procs_per_node=ppn,
+                       image=_text(raw, "image") if "image" in raw else DEFAULTS["image"],
+                       apptainer=_text(raw, "apptainer") if "apptainer" in raw else DEFAULTS["apptainer"])
