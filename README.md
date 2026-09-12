@@ -176,6 +176,40 @@ It imports the real prodtools modules in a subprocess and binds every
 call `bridge.py` makes to the real signature. Run it after pulling
 prodtools.
 
+## NERSC from a laptop
+
+1. Create a NERSC Superfacility API client in Iris (Superfacility API
+   Clients, "+ New Client", red level for job submission, your laptop's
+   public IP in the allow list). Save the client id to `~/.sfapi/client_id`
+   and the private key (PEM or JWK tab) to `~/.sfapi/priv_key.pem`, then
+   `chmod 400 ~/.sfapi/priv_key.pem`.
+2. `pip install beamkit` (Python 3.10+, git on PATH).
+3. Write `~/.beamkit/nersc.toml`:
+
+   ```toml
+   api            = "https://api.iri.nersc.gov/api/v2"
+   sfapi_dir      = "~/.sfapi"
+   account        = "m4599"
+   base_dir       = "/global/cfs/cdirs/m4599/Users/<nersc-login>/beamkit"
+   qos            = "regular"     # "debug" for a 30-minute test
+   owner          = "<nersc-login>"
+   ```
+
+4. Register the MCP server (Claude Code `.mcp.json` or Claude Desktop):
+
+   ```json
+   {"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}
+   ```
+
+5. `get_server_info` shows `backends.nersc.available: true`. Then
+   `run_beamline(tag="G4blBeam", deck_ref="<sha or tag>", run_as="self",
+   site="nersc", njobs=10, events_per_job=1000)`, `beamline_status`, and
+   `make_beamfile(run_id, "bm", "self", site="nersc")`.
+
+Outputs stay on CFS under `base_dir/runs/<run_id>/out/`; the beam file
+under `beamfiles/`. Nothing is declared to SAM. There is no recovery:
+`beamline_status` lists missing indices; a new run replaces a short one.
+
 ## Not in v1
 
 - Sweeps (list-valued params fanning out into N runs) and any

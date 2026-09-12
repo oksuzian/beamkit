@@ -81,13 +81,20 @@ how the test suite runs.
 | `bridge.py` | 101 | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
 | `beamfile.py` | 231 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
 | `decks.py` | 109 | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
-| `records.py` | 87 | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`. prodtools' ledger is the system of record for submission state. |
+| `records.py` | 96 | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`, `partially_submitted`, `short`, `complete`. prodtools' ledger is the system of record for submission state on the Fermilab path; the last three states are NERSC-only, computed from Slurm and `out/` since there is no ledger there. |
 | `identity.py` | 79 | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
 | `compose.py` | 72 | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
 | `naming.py` | 68 | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
 | `publishing.py` | 49 | The publish step of `make_beamfile`: knowable-up-front preconditions, hard link to the SAM name, push, and an unwind that discards only what this call created. Tested against a fake push with nothing built. |
 | `_read_plane.py` | 40 | Prints one ntuple plane as TSV. Runs under a *different* interpreter (ana 2.8.0, for uproot) and imports nothing from beamkit. |
 | `paths.py` | 23 | `$BEAMKIT_HOME` and the three directories under it. |
+| `iri.py` | 173 | Thin client for the IRI Facility API v2 as NERSC serves it: paths in, parsed JSON out, `IriError` on anything that is not success. Knows nothing about beamkit runs; takes NERSC Superfacility API client credentials (Globus tokens are rejected by v2). |
+| `nersc_config.py` | 100 | Loads `$BEAMKIT_HOME/nersc.toml` — everything the NERSC backend needs to know about the facility and the caller's client — per tool call, refusing a missing or malformed file with the full key list. |
+| `nersc_cnf.py` | 55 | Builds the cnf tarball for a NERSC run on the caller's machine: the deck without VCS internals plus a `jobpars.json` in the shape prodtools' `json2jobdef._build_g4bl_tarball` writes, so a later harvest can declare it as the parent of every nts file unchanged. |
+| `nersc_templates.py` | 95 | Fills in the `@@NAME@@` placeholders of the files beamkit puts on a Perlmutter node; the g4bl lines are prodtools' `utils.runmu2e._g4bl_script` reproduced here because the NERSC path runs no prodtools on the node. |
+| `templates/` | 106 | The four rendered files: `job.sh` (enter the Mu2e EL9 image via apptainer), `inner.sh` (per-index g4bl run, log opened first so 128 tasks on one node never interleave), `beamfile.sh` (enter the image to build a beam file), `beamfile_job.py` (self-contained BLTrackFile writer, using uproot from the cvmfs ana environment). |
+| `backends/__init__.py` | 11 | `validate_site`: `fermilab` is the prodtools path in `tools.py`, `nersc` is `backends/nersc.py`. `tools.py` calls it once per tool invocation. |
+| `backends/nersc.py` | 346 | The NERSC backend: a run is a directory on CFS plus one Slurm job per slice of `procs_per_node` indices, driven through the IRI Facility API. Touches no SAM, dCache, prodtools or ledger. |
 | `__init__.py` | 8 | Version and `BeamkitError`, the base of every error beamkit raises. |
 
 The test suite fakes every prodtools symbol, so one more test holds the
@@ -147,6 +154,40 @@ campaign was created adopts that campaign into the record (state `created`)
 so `make_recoveries` submits it; a push that never reached SAM leaves the
 dsconf free and the run dir retryable in place.
 
+## Submitting a run at NERSC
+
+```mermaid
+sequenceDiagram
+    participant C as Claude (laptop)
+    participant B as beamkit tools
+    participant N as backends/nersc
+    participant I as api.iri.nersc.gov
+    participant P as Perlmutter node
+    C->>B: run_beamline(tag, deck_ref, run_as="self", site="nersc", njobs)
+    B->>N: run_beamline(...)
+    N->>N: load nersc.toml, resolve identity, validate, pin deck
+    N->>I: ls runs/<tag>.<sha7>  (dsconf collision probe)
+    N->>N: build cnf tarball, render job.sh + inner.sh, save record (created)
+    N->>I: mkdir run dir, out/, slurm/, beamfiles/; upload cnf, job.sh, inner.sh
+    loop one Slurm job per procs_per_node indices
+        N->>I: POST /compute/job (BK_OFFSET=k*procs_per_node)
+        I-->>N: slurm id  (record: jobs[])
+    end
+    I->>P: srun job.sh x count
+    P->>P: inner.sh: log, tar xf cnf, spack load g4beamline, g4bl, mv nts to out/
+    C->>B: beamline_status(run_id)
+    B->>N: status(rec)
+    N->>I: GET /compute/status per job; ls out/
+    N-->>C: jobs, expected/nts/logs/missing, state submitted|short|complete
+```
+
+There is no prodtools call anywhere in this path: `iri.py` talks to the
+Superfacility API directly, the cnf tarball is built and uploaded from the
+caller's machine, and the run directory on CFS — not a SAM dataset, not a
+ledger row — is the only record of what ran until `beamline_status` reads it
+back. `run_beamline(..., submit=False)` stops after the layout and cnf
+upload; `submit_run` fires the Slurm jobs a later, separate call.
+
 ## Building a beam file
 
 ```mermaid
@@ -185,3 +226,8 @@ because on a large run that read is hours long.
   Mu2e name is spelled in `naming.py`, every caller input is checked in
   `compose.validate_inputs`, and `BEAMKIT_PRODTOOLS_DIR` is read in one
   function. A rule that needs a second home is a rule that will drift.
+- **No recovery on the NERSC path.** Status reports, a new run replaces a
+  short one. The Fermilab path keeps prodtools' recovery.
+- **Fermilab services are a plugin.** The NERSC path imports nothing from
+  prodtools and touches no SAM, dCache or ledger; harvest to them is a
+  later, optional step.
