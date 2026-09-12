@@ -7,10 +7,13 @@ name = "beamkit"
 version = "0.1.0"
 description = "G4beamline production front end over the Mu2e prodtools g4bl runner, with an MCP server"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["mcp", "requests", "authlib", "tomli; python_version < '3.11'"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+
+[project.scripts]
+beamkit-mcp = "beamkit.server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
