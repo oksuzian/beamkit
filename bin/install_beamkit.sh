@@ -127,6 +127,9 @@ else
 fi
 
 REL="${INSTALL_BASE}/${VER}"
+# First release: the base directory does not exist yet (inside the
+# transaction for a real install, plain mkdir in test mode).
+mkdir -p "${INSTALL_BASE}"
 if [[ -z "$SRC_TREE" ]]; then
   echo "Downloading and extracting beamkit ${VER}..."
   curl -fsSL "https://github.com/${GITHUB_REPO}/archive/refs/tags/${VER}.tar.gz" \
