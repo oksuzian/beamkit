@@ -152,6 +152,8 @@ if ! $NERSC_ONLY; then
   env -u PYTHONPATH "${REL}/.venv/bin/pip" install --no-cache-dir "htcondor==${CONDOR_SERIES}.*" 1>&2
 fi
 env -u PYTHONPATH "${REL}/.venv/bin/pip" install --no-cache-dir "${REL}" 1>&2
+# pip leaves its build tree and egg-info in the source directory.
+rm -rf "${REL}/build" "${REL}"/src/*.egg-info
 echo "binding to: ${PYTHON}" > "${REL}/.venv-binding"
 env -u PYTHONPATH "${REL}/.venv/bin/python" -c "import beamkit.server, mcp, requests, authlib; print('OK: beamkit', beamkit.server.__name__)"
 
