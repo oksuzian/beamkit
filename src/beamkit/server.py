@@ -30,8 +30,11 @@ drop_pdg, min_p_mev}. label names the files and the SAM artifact and
 defaults to the flavor. publish=true pushes it to SAM via prodtools
 push_file (tape for mu2epro, scratch for self) when prodtools has it.
 
-Records live under BEAMKIT_HOME/runs/<run_id>/ (entry.json, run.json);
-beamline_status merges a record with prodtools campaign_status.
+Records live under BEAMKIT_HOME/runs/<run_id>/: a Fermilab run dir holds
+entry.json and run.json; a NERSC run dir holds run.json, the cnf, job.sh,
+inner.sh and beamfiles/. beamline_status merges a record with prodtools
+campaign_status (site="fermilab") or Slurm job states and CFS output
+counts (site="nersc").
 
 site="nersc" (run_beamline, make_beamfile) runs on NERSC Perlmutter
 through the IRI Facility API with no Fermilab service in the loop: the
@@ -50,7 +53,7 @@ TOOLS = {
     "make_recoveries": "One prodtools tick for this run: verify, resubmit missing indices, feed unsubmitted slices. Ledger-wide recovery pass.",
     "submit_run": "NERSC runs only: submit the Slurm jobs of a run created with submit=false, or the jobs a partial submit did not reach.",
     "beamline_status": "Run record merged with campaign status: prodtools (site=\"fermilab\") or Slurm job states and CFS output counts, expected/nts/logs/missing (site=\"nersc\").",
-    "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention.",
+    "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention/partially_submitted/short/complete.",
     "beamline_outputs": "Files of the run's nts dataset with sizes and paths: dCache (site=\"fermilab\") or CFS (site=\"nersc\").",
     "make_beamfile": "Build a BLTrackFile beam file from the run's nts files, through prodtools (site=\"fermilab\") or as a Slurm job on Perlmutter (site=\"nersc\"); preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
     "get_server_info": "beamkit version, backends (fermilab/nersc availability), prodtools root and commit, directories, limits, walltime_default.",
