@@ -204,6 +204,9 @@ def make_recoveries(run_id: str, run_as: str, confirm: bool = False) -> dict:
     ledger. The result names which form ran."""
     ident = identity.resolve(run_as, confirm)
     rec = records.load(run_id, paths.runs_dir())
+    if rec.site == "nersc":
+        raise BeamkitError(f"run {run_id}: no recovery on nersc; submit a new run (beamline_status reports "
+                           f"the missing indices)")
     if rec.campaign_id is None:
         raise BeamkitError(f"run {run_id} has no campaign (state {rec.state!r}); nothing to recover")
     if ident.run_as != rec.run_as:
@@ -231,12 +234,16 @@ def submit_run(run_id: str, run_as: str) -> dict:
 
 
 def beamline_status(run_id: str) -> dict:
-    """The run record merged with prodtools' campaign_status."""
+    """The run record merged with prodtools' campaign_status (Fermilab) or
+    with the Slurm job states and CFS output counts (NERSC)."""
     rec = records.load(run_id, paths.runs_dir())
+    if rec.site == "nersc":
+        n = nersc_backend.status(rec)
+        return {"record": rec.to_dict(), "campaign": None, "nersc": n}
     campaign = None
     if rec.campaign_id is not None:
         campaign = bridge.campaign_status(rec.campaign_id, mine=identity.for_record(rec).mine)
-    return {"record": rec.to_dict(), "campaign": campaign}
+    return {"record": rec.to_dict(), "campaign": campaign, "nersc": None}
 
 
 def list_beamline_runs(state: Optional[str] = None) -> dict:
@@ -246,8 +253,11 @@ def list_beamline_runs(state: Optional[str] = None) -> dict:
 
 
 def beamline_outputs(run_id: str) -> dict:
-    """Files of the run's nts dataset with sizes and dCache paths."""
+    """Files of the run's nts dataset with sizes and paths: dCache via SAM
+    for a Fermilab run, CFS via one ls for a NERSC run."""
     rec = records.load(run_id, paths.runs_dir())
+    if rec.site == "nersc":
+        return nersc_backend.outputs(rec)
     files = bridge.dataset_files(_dataset(rec), rec.outloc)
     return {"run_id": run_id, "dataset": _dataset(rec), "location": rec.outloc,
             "n_files": len(files), "total_size": sum(f["size"] for f in files), "files": files}

@@ -51,6 +51,8 @@ from beamkit.decks import DEFAULT_DECK_URL   # noqa: F401  (kept for callers tha
 
 make_client = iri.IriClient
 SUBMITTABLE = ("created", "partially_submitted")
+TERMINAL = ("completed", "failed", "canceled")
+MISSING_CAP = 50
 
 
 def run_dir(cfg, run_id) -> str:
@@ -183,3 +185,78 @@ def submit_run(run_id, run_as) -> dict:
         raise BeamkitError(f"run {run_id} is in state {rec.state!r}; submit_run applies to {SUBMITTABLE}")
     _submit_missing(rec, cfg, make_client(cfg), runs_dir)
     return rec.to_dict()
+
+
+def _nts_index(name, rec):
+    prefix = f"nts.{rec.owner}.{rec.tag}.{rec.dsconf}."
+    base = name.rsplit("/", 1)[-1]
+    if base.startswith(prefix) and base.endswith(".root"):
+        seq = base[len(prefix):-5]
+        if seq.isdigit():
+            return int(seq)
+    return None
+
+
+def out_counts(client, rec) -> dict:
+    """A run that failed before its remote layout was ever created (e.g.
+    the cnf itself exceeded the upload cap) has no out/ dir yet -- that is
+    zero files, not an error, same as client.exists() treats it."""
+    try:
+        entries = client.ls(f"{rec.nersc['run_dir']}/out")
+    except iri.IriError as e:
+        if "No such file" in (e.detail or str(e)):
+            entries = []
+        else:
+            raise
+    nts = {}
+    logs = 0
+    for e in entries:
+        base = e["name"].rsplit("/", 1)[-1]
+        idx = _nts_index(base, rec)
+        if idx is not None:
+            nts[idx] = e
+        elif base.startswith(f"log.{rec.owner}.{rec.tag}.{rec.dsconf}."):
+            logs += 1
+    missing = sorted(set(range(rec.njobs)) - set(nts))
+    return {"expected": rec.njobs, "nts": len(nts), "logs": logs, "missing": missing[:MISSING_CAP],
+            "nts_files": [nts[i]["name"].rsplit("/", 1)[-1] for i in sorted(nts)]}
+
+
+def _job_status(client, job):
+    st = client.status(job["slurm_id"])
+    md = st.get("meta_data") or {}
+    return {"slurm_id": job["slurm_id"], "offset": job["offset"], "count": job["count"],
+            "state": st["state"], "exit_code": st.get("exit_code"),
+            "elapsed": md.get("elapsed"), "node": md.get("nodelist")}
+
+
+def status(rec) -> dict:
+    """Slurm state per job and one ls of out/. Sets the run state:
+    complete / short once every job is terminal, submitted otherwise.
+    created and partially_submitted are left as they are."""
+    cfg = nersc_config.load(paths.home())
+    client = make_client(cfg)
+    jobs = [_job_status(client, j) for j in rec.nersc.get("jobs", [])]
+    outs = out_counts(client, rec)
+    if rec.state in ("submitted", "short", "complete") and jobs:
+        if all(j["state"] in TERMINAL for j in jobs):
+            rec.state = "complete" if outs["nts"] == outs["expected"] else "short"
+        else:
+            rec.state = "submitted"
+        records.save(rec, paths.runs_dir())
+    return {"jobs": jobs, "outputs": outs, "beamfiles": list(rec.beamfiles)}
+
+
+def outputs(rec) -> dict:
+    cfg = nersc_config.load(paths.home())
+    client = make_client(cfg)
+    rd = rec.nersc["run_dir"]
+    files = []
+    for e in client.ls(f"{rd}/out"):
+        idx = _nts_index(e["name"], rec)
+        if idx is not None:
+            name = e["name"].rsplit("/", 1)[-1]
+            files.append({"name": name, "index": idx, "size": int(e["size"]), "path": f"{rd}/out/{name}"})
+    files.sort(key=lambda f: f["index"])
+    return {"run_id": rec.run_id, "run_dir": rd, "n_files": len(files),
+            "total_size": sum(f["size"] for f in files), "files": files, "beamfiles": list(rec.beamfiles)}
