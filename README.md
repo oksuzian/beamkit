@@ -43,14 +43,20 @@ Ask in plain words; the agent picks the tool.
 | you say | tool called |
 |---|---|
 | "Is beamkit working?" | `get_server_info` -- both `backends` should say `available: true` |
-| "Run 100 g4bl jobs of 1000 events from deck tag v3 on NERSC" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", site="nersc", njobs=100, events_per_job=1000)` |
-| "Same on the grid" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", njobs=100, events_per_job=1000)` |
+| "Run 100 g4bl jobs of 1000 events from deck tag v3 on NERSC" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", site="nersc", njobs=100, events_per_job=1000, params={"epsMax": "0.01"})` |
+| "Same on the grid" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", njobs=100, events_per_job=1000, params={"epsMax": "0.01"})` |
 | "How is run G4blBeam.e470313 doing?" | `beamline_status("G4blBeam.e470313")` |
 | "List my runs" | `list_beamline_runs()` |
 | "Where are the outputs?" | `beamline_outputs(run_id)` -- CFS paths for NERSC, dataset files for Fermilab |
 | "Build the bm beam file" | `make_beamfile(run_id, "bm", "self", site="nersc")` or without `site` on Fermilab |
 | "Submit the jobs I created with submit=False" | `submit_run(run_id, "self")` (NERSC only) |
 | "Recover the missing jobs" | `make_recoveries(run_id, "self")` (Fermilab only; NERSC has no recovery, rerun instead) |
+
+`params` are `key=value` overrides appended to the g4bl command line.
+Until G4BeamlineScripts carries `param epsMax=0.01`, every run needs
+`params={"epsMax": "0.01"}`: g4bl's built-in default is 0.05 and the
+Geant4 in g4beamline 3.08b aborts on it (`G4Exception Geometry001`,
+exit 99, two logs and no output file).
 
 `run_as="self"` is always safe: your account, your scratch, your ledger.
 `run_as="mu2epro"` (Fermilab only) needs `confirm=True` and a hook
