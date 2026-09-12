@@ -7,9 +7,12 @@ from that pin, an entry JSON composed from it, and a beam-file builder for
 the ntuples the run produces.
 
 Everything in `src/beamkit/` is one of four things: a rule (identity, naming,
-compose), a seam (bridge, server), a store (paths, records), or a payload
-transformer (decks, beamfile, publishing, `_read_plane`). `tools.py` is the
-only module that orchestrates; the rest are leaves it calls.
+compose), a seam (bridge, server, iri), a store (paths, records), or a
+payload transformer (decks, beamfile, publishing, `_read_plane`,
+nersc_cnf, nersc_templates). `tools.py` orchestrates the Fermilab path
+directly and dispatches `site="nersc"` calls to `backends/nersc.py`,
+which orchestrates that path the same way (layout, submit, status)
+against `iri.py` instead of `bridge.py`.
 
 ## The layers
 
@@ -21,7 +24,7 @@ graph TB
 
     subgraph beamkit["beamkit"]
         SRV["<b>server.py</b><br/>FastMCP wiring — registers tools.py's<br/>functions as they are. Imports mcp only<br/>inside create_mcp_server()."]
-        TOOLS["<b>tools.py</b><br/>The eight tools. Orchestration only:<br/>validate, then call the leaves in order."]
+        TOOLS["<b>tools.py</b><br/>The eight tools. Orchestration only:<br/>validate, dispatch on site, call the leaves in order."]
 
         subgraph rules["Rules — pure, no I/O"]
             IDN["<b>identity.py</b><br/>what run_as means: owner, ledger,<br/>confirm, what may ship"]
@@ -42,6 +45,14 @@ graph TB
         end
 
         BRG["<b>bridge.py</b><br/>the ONLY module that imports prodtools.<br/>Every import is inside a function, so beamkit<br/>and its whole test suite run with prodtools absent."]
+
+        subgraph nersc_backend["backends/ — the NERSC path"]
+            NB["<b>backends/nersc.py</b><br/>orchestrates layout, submit, status —<br/>the site=nersc mirror of tools.py"]
+            NCFG["<b>nersc_config.py</b><br/>loads + validates $BEAMKIT_HOME/nersc.toml"]
+            NCNF["<b>nersc_cnf.py</b><br/>builds the cnf tarball locally,<br/>jobpars shaped like json2jobdef's"]
+            NTPL["<b>nersc_templates.py</b><br/>fills job.sh / inner.sh / beamfile.sh —<br/>carries prodtools' g4bl recipe, checked<br/>byte-equal by the bridge contract probe"]
+            IRI["<b>iri.py</b><br/>thin client for the IRI Facility API:<br/>paths in, parsed JSON out, IriError otherwise"]
+        end
     end
 
     subgraph ext["Outside"]
@@ -49,53 +60,62 @@ graph TB
         SAM["SAM catalog"]
         GRID["HTCondor / jobsub"]
         GIT["github.com/Mu2e/G4BeamlineScripts"]
+        IRIAPI["api.iri.nersc.gov<br/>Superfacility API v2 — compute + CFS"]
     end
 
     MCP --> SRV --> TOOLS
     TOOLS --> IDN & NAM & CMP & DEK & BF & PUB & REC & PTH
     TOOLS --> BRG
+    TOOLS -->|site=nersc| NB
+    NB --> NCFG & NCNF & NTPL & IRI
     PUB --> BRG
     BF -.->|subprocess| RP
     DEK -.->|git| GIT
     BRG --> PT
     PT --> SAM & GRID
+    IRI --> IRIAPI
 
     classDef boundary fill:#fff3cd,stroke:#b8860b,stroke-width:2px
     classDef external fill:#eee,stroke:#888
-    class SRV,BRG boundary
-    class PT,SAM,GRID,GIT external
+    class SRV,BRG,IRI boundary
+    class PT,SAM,GRID,GIT,IRIAPI external
 ```
 
-Two boundaries carry the design (shaded above). `server.py` is the only thing
-that knows about MCP; `bridge.py` is the only thing that knows about
-prodtools. Neither contains logic. Every other module can be read, tested, and
-reasoned about with both prodtools and `mcp` uninstalled — which is exactly
-how the test suite runs.
+Three boundaries carry the design (shaded above). `server.py` is the only
+thing that knows about MCP; `bridge.py` is the only thing that knows about
+prodtools; `iri.py` is the only thing that knows about the NERSC
+Superfacility API. None of the three contains logic. Every other module can
+be read, tested, and reasoned about with prodtools, `mcp`, and the network
+all absent — which is exactly how the test suite runs.
 
 ## What each file is for
 
-| File | Lines | Purpose |
-| --- | --- | --- |
-| `server.py` | 80 | FastMCP registration: a name→description table registering all eight tools, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
-| `tools.py` | 346 | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, dispatches on `site` (`fermilab` through prodtools, `nersc` through the NERSC backend), then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
-| `bridge.py` | 101 | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
-| `beamfile.py` | 231 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
-| `decks.py` | 109 | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
-| `records.py` | 96 | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`, `partially_submitted`, `short`, `complete`. prodtools' ledger is the system of record for submission state on the Fermilab path; the last three states are NERSC-only, computed from Slurm and `out/` since there is no ledger there. |
-| `identity.py` | 79 | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
-| `compose.py` | 72 | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
-| `naming.py` | 68 | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
-| `publishing.py` | 49 | The publish step of `make_beamfile`: knowable-up-front preconditions, hard link to the SAM name, push, and an unwind that discards only what this call created. Tested against a fake push with nothing built. |
-| `_read_plane.py` | 40 | Prints one ntuple plane as TSV. Runs under a *different* interpreter (ana 2.8.0, for uproot) and imports nothing from beamkit. |
-| `paths.py` | 23 | `$BEAMKIT_HOME` and the three directories under it. |
-| `iri.py` | 173 | Thin client for the IRI Facility API v2 as NERSC serves it: paths in, parsed JSON out, `IriError` on anything that is not success. Knows nothing about beamkit runs; takes NERSC Superfacility API client credentials (Globus tokens are rejected by v2). |
-| `nersc_config.py` | 100 | Loads `$BEAMKIT_HOME/nersc.toml` — everything the NERSC backend needs to know about the facility and the caller's client — per tool call, refusing a missing or malformed file with the full key list. |
-| `nersc_cnf.py` | 55 | Builds the cnf tarball for a NERSC run on the caller's machine: the deck without VCS internals plus a `jobpars.json` in the shape prodtools' `json2jobdef._build_g4bl_tarball` writes, so a later harvest can declare it as the parent of every nts file unchanged. |
-| `nersc_templates.py` | 95 | Fills in the `@@NAME@@` placeholders of the files beamkit puts on a Perlmutter node; the g4bl lines are prodtools' `utils.runmu2e._g4bl_script` reproduced here because the NERSC path runs no prodtools on the node. |
-| `templates/` | 106 | The four rendered files: `job.sh` (enter the Mu2e EL9 image via apptainer), `inner.sh` (per-index g4bl run, log opened first so 128 tasks on one node never interleave), `beamfile.sh` (enter the image to build a beam file), `beamfile_job.py` (self-contained BLTrackFile writer, using uproot from the cvmfs ana environment). |
-| `backends/__init__.py` | 11 | `validate_site`: `fermilab` is the prodtools path in `tools.py`, `nersc` is `backends/nersc.py`. `tools.py` calls it once per tool invocation. |
-| `backends/nersc.py` | 346 | The NERSC backend: a run is a directory on CFS plus one Slurm job per slice of `procs_per_node` indices, driven through the IRI Facility API. Touches no SAM, dCache, prodtools or ledger. |
-| `__init__.py` | 8 | Version and `BeamkitError`, the base of every error beamkit raises. |
+| File | Purpose |
+| --- | --- |
+| `server.py` | FastMCP registration: a name→description table registering all eight tools, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
+| `tools.py` | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, dispatches on `site` (`fermilab` through prodtools, `nersc` through `backends/nersc.py`), then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
+| `bridge.py` | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
+| `beamfile.py` | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
+| `decks.py` | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
+| `records.py` | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`, `partially_submitted`, `short`, `complete`. prodtools' ledger is the system of record for submission state on the Fermilab path; the last three states are NERSC-only, computed from Slurm and `out/` since there is no ledger there. |
+| `identity.py` | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
+| `compose.py` | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
+| `naming.py` | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
+| `publishing.py` | The publish step of `make_beamfile`: knowable-up-front preconditions, hard link to the SAM name, push, and an unwind that discards only what this call created. Tested against a fake push with nothing built. |
+| `_read_plane.py` | Prints one ntuple plane as TSV. Runs under a *different* interpreter (ana 2.8.0, for uproot) and imports nothing from beamkit. |
+| `paths.py` | `$BEAMKIT_HOME` and the three directories under it. |
+| `iri.py` | Thin client for the IRI Facility API v2 as NERSC serves it: paths in, parsed JSON out, `IriError` on anything that is not success. Knows nothing about beamkit runs; takes NERSC Superfacility API client credentials (Globus tokens are rejected by v2). |
+| `nersc_config.py` | Loads `$BEAMKIT_HOME/nersc.toml` — everything the NERSC backend needs to know about the facility and the caller's client — per tool call, refusing a missing or malformed file with the full key list. |
+| `nersc_cnf.py` | Builds the cnf tarball for a NERSC run on the caller's machine: the deck without VCS internals plus a `jobpars.json` in the shape prodtools' `json2jobdef._build_g4bl_tarball` writes, so a later harvest can declare it as the parent of every nts file unchanged. |
+| `nersc_templates.py` | Fills in the `@@NAME@@` placeholders of the files beamkit puts on a Perlmutter node; the g4bl lines are prodtools' `utils.runmu2e._g4bl_script` reproduced here because the NERSC path runs no prodtools on the node. |
+| `templates/` | The four rendered files: `job.sh` (enter the Mu2e EL9 image via apptainer), `inner.sh` (per-index g4bl run, log opened first so 128 tasks on one node never interleave), `beamfile.sh` (enter the image to build a beam file), `beamfile_job.py` (self-contained BLTrackFile writer, using uproot from the cvmfs ana environment). |
+| `backends/__init__.py` | `validate_site`: `fermilab` is the prodtools path in `tools.py`, `nersc` is `backends/nersc.py`. `tools.py` calls it once per tool invocation. |
+| `backends/nersc.py` | The NERSC backend: a run is a directory on CFS plus one Slurm job per slice of the run's own `slice_size` indices, driven through the IRI Facility API. Orchestrates layout, submit and status the way `tools.py` orchestrates the Fermilab path. Touches no SAM, dCache, prodtools or ledger. |
+| `__init__.py` | Version and `BeamkitError`, the base of every error beamkit raises. |
+
+Line counts are not tracked here: they drift every time a fix lands and a
+stale number is worse than none. `git ls-files 'src/beamkit/**/*.py' | xargs
+wc -l` gets the current ones.
 
 The test suite fakes every prodtools symbol, so one more test holds the
 bridge seam honest: with `BEAMKIT_PRODTOOLS_ROOT` naming a checkout,
@@ -214,8 +234,11 @@ because on a large run that read is hours long.
 - **One import point.** Only `bridge.py` imports prodtools, and only inside
   functions. This is what lets the suite run anywhere.
 - **No fallbacks.** Validate at the boundary and fail loudly naming the cause.
-  There is no `else:` branch anywhere that substitutes a default for a failed
-  lookup.
+  The one deliberate exception is `backends/nersc.out_counts`, which reads a
+  missing CFS `out/` (a run that failed before its remote layout was ever
+  created) as zero files rather than an error, the same way `client.exists()`
+  treats it — a ruling, not a silent default, and it does not extend to
+  `outputs()`, which lets that same "no such file" surface as `IriError`.
 - **Two identities.** `run_as="self"` touches only your own scratch, datasets
   and ledger. `run_as="mu2epro"` writes production SAM and submits production
   jobs, and is refused without `confirm=True` — here, and again inside
