@@ -66,3 +66,30 @@ def render_inner(cfg, *, run_id, run_dir, owner, tag, dsconf, events_per_job, ma
 
 def render_beamfile_sh(cfg, *, job_py) -> str:
     return render("beamfile.sh", {"APPTAINER": cfg.apptainer, "IMAGE": cfg.image, "JOB_PY": job_py})
+
+
+import json
+from beamkit import beamfile as _beamfile_module
+
+_IMPORT_LINE = "from beamkit import BeamkitError\n"
+
+
+def beamfile_module_source() -> str:
+    """beamfile.py as a standalone module: the one beamkit import becomes a
+    local class. Nothing else in that file depends on the package."""
+    src = Path(_beamfile_module.__file__).read_text()
+    if _IMPORT_LINE not in src:
+        raise TemplateError("beamfile.py no longer has the expected single beamkit import; update the embedding")
+    return src.replace(_IMPORT_LINE, "class BeamkitError(Exception):\n    pass\n", 1)
+
+
+def render_beamfile_job(*, run_dir, owner, tag, dsconf, events_per_job, njobs, plane, label, flavor, cuts) -> str:
+    stem = f"{run_dir}/beamfiles/etc.{owner}.{tag}Beam-{label}.{dsconf}.0"
+    return render("beamfile_job.py", {
+        "RUN_DIR": run_dir, "OWNER": owner, "TAG": tag, "DSCONF": dsconf,
+        "EVENTS_PER_JOB": int(events_per_job), "NJOBS": int(njobs),
+        "PLANE": plane, "LABEL": label, "FLAVOR": flavor,
+        "CUTS_JSON": json.dumps(cuts).replace("\\", "\\\\").replace("'", "\\'"),
+        "OUT_TXT": stem + ".txt", "OUT_JSON": stem + ".json",
+        "BEAMFILE_MODULE": beamfile_module_source(),
+    })

@@ -1,6 +1,7 @@
 """The NERSC backend: a run is a directory on CFS plus one Slurm job per
 slice of procs_per_node indices, driven through the IRI Facility API.
 Nothing here touches SAM, dCache, prodtools or a ledger."""
+import json
 import math
 from pathlib import Path
 
@@ -243,7 +244,8 @@ def status(rec) -> dict:
             rec.state = "complete" if outs["nts"] == outs["expected"] else "short"
         else:
             rec.state = "submitted"
-        records.save(rec, paths.runs_dir())
+    _refresh_beamfiles(client, rec)
+    records.save(rec, paths.runs_dir())
     return {"jobs": jobs, "outputs": outs, "beamfiles": list(rec.beamfiles)}
 
 
@@ -260,3 +262,85 @@ def outputs(rec) -> dict:
     files.sort(key=lambda f: f["index"])
     return {"run_id": rec.run_id, "run_dir": rd, "n_files": len(files),
             "total_size": sum(f["size"] for f in files), "files": files, "beamfiles": list(rec.beamfiles)}
+
+
+from beamkit import beamfile
+
+BEAMFILE_WALLTIME_CAP = 4 * 3600
+
+
+def beamfile_duration(n_nts) -> int:
+    return min(BEAMFILE_WALLTIME_CAP, 600 + 2 * int(n_nts))
+
+
+def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dict:
+    cfg = nersc_config.load(paths.home())
+    identity.resolve(run_as, site="nersc", owner=cfg.owner)
+    if publish:
+        raise BeamkitError("publish=True on a NERSC run: publishing is part of harvest, which runs at Fermilab; "
+                           "build with publish=False")
+    label = flavor if label is None else label
+    resolved = beamfile.resolve_cuts(flavor, cuts)
+    beamfile.validate_label(label)
+    beamfile.validate_plane(plane)
+    runs_dir = paths.runs_dir()
+    rec = records.load(run_id, runs_dir)
+    if rec.site != "nersc":
+        raise BeamkitError(f"run {run_id} is a {rec.site!r} run; pass site={rec.site!r}")
+    if any(b["label"] == label for b in rec.beamfiles):
+        raise BeamkitError(f"run {run_id}: label {label!r} already has a beam file; a beam file is never "
+                           f"overwritten (pick another label)")
+    client = make_client(cfg)
+    counts = out_counts(client, rec)
+    if counts["nts"] == 0:
+        raise BeamkitError(f"run {run_id}: 0 of {counts['expected']} nts files on CFS "
+                           f"({counts['logs']} logs); nothing to build a beam file from")
+    rd = rec.nersc["run_dir"]
+    stem = f"{rd}/beamfiles/etc.{rec.owner}.{rec.tag}Beam-{label}.{rec.dsconf}.0"
+    local = records.run_dir(runs_dir, run_id) / "beamfiles"
+    local.mkdir(exist_ok=True)
+    job_py, job_sh = local / f"beamfile_job.{label}.py", local / f"beamfile.{label}.sh"
+    job_py.write_text(nersc_templates.render_beamfile_job(
+        run_dir=rd, owner=rec.owner, tag=rec.tag, dsconf=rec.dsconf, events_per_job=rec.events_per_job,
+        njobs=rec.njobs, plane=plane, label=label, flavor=flavor, cuts=resolved))
+    job_sh.write_text(nersc_templates.render_beamfile_sh(cfg, job_py=f"{rd}/beamfiles/{job_py.name}"))
+    client.upload(job_py, f"{rd}/beamfiles/{job_py.name}")
+    client.upload(job_sh, f"{rd}/beamfiles/{job_sh.name}")
+    spec = job_spec(cfg, run_id=rec.run_id, run_dir=rd, offset=0, count=1,
+                    duration=beamfile_duration(counts["nts"]))
+    spec["name"] = f"beamkit.{rec.run_id}.beamfile.{label}"
+    spec["arguments"] = [f"{rd}/beamfiles/{job_sh.name}"]
+    spec["stdout_path"], spec["stderr_path"] = f"{rd}/slurm/beamfile.{label}.out", f"{rd}/slurm/beamfile.{label}.err"
+    spec["environment"] = {}
+    jid = client.submit(spec, idem_key=f"{rec.run_id}/beamfile/{label}")
+    entry = {"run_id": run_id, "flavor": flavor, "label": label, "cuts": resolved, "plane": plane,
+             "slurm_id": jid, "state": "submitted", "exit_code": None, "n_files_at_submit": counts["nts"],
+             "path": stem + ".txt", "sidecar": stem + ".json", "sha256": None, "size": None, "rows": None,
+             "rows_in": None, "dropped": None, "pot": None, "n_files": None, "missing_indices": None,
+             "sam_name": None, "location": None, "created": records.now_utc()}
+    rec.beamfiles.append(entry)
+    records.save(rec, runs_dir)
+    return entry
+
+
+SIDECAR_KEYS = ("sha256", "size", "rows", "rows_in", "dropped", "pot", "n_files", "missing_indices", "created")
+
+
+def _refresh_beamfiles(client, rec) -> None:
+    """Beam-file jobs still 'submitted': read Slurm; on a terminal state
+    read the sidecar and copy its numbers in, or record the failure."""
+    for bf in rec.beamfiles:
+        if bf.get("state") != "submitted":
+            continue
+        st = client.status(bf["slurm_id"])
+        if st["state"] not in TERMINAL:
+            continue
+        bf["exit_code"] = st.get("exit_code")
+        try:
+            side = json.loads(client.download(bf["sidecar"]))
+        except (iri.IriError, ValueError):
+            bf["state"] = "failed"
+            continue
+        for k in SIDECAR_KEYS:
+            bf[k] = side.get(k)
+        bf["state"] = "complete" if st["state"] == "completed" else "failed"

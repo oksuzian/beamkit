@@ -265,10 +265,21 @@ def beamline_outputs(run_id: str) -> dict:
 
 def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", cuts: Optional[dict] = None,
                   publish: bool = False, location: Optional[str] = None, confirm: bool = False,
-                  label: Optional[str] = None) -> dict:
-    """A BLTrackFile from whatever nts files the run has in SAM. No
-    completeness check: pot counts the files that exist. flavor selects
-    the cut table; label names the files and defaults to the flavor."""
+                  label: Optional[str] = None, site: str = "fermilab") -> dict:
+    """A BLTrackFile from whatever nts files the run has: read from SAM and
+    built here (site='fermilab'), or built by one Slurm job on Perlmutter
+    from the files on CFS (site='nersc', never downloads). No completeness
+    check: pot counts the files that exist. flavor selects the cut table;
+    label names the files and defaults to the flavor."""
+    backends.validate_site(site)
+    rec_site = records.load(run_id, paths.runs_dir()).site
+    if rec_site != site:
+        raise BeamkitError(f"run {run_id} is a {rec_site!r} run; pass site={rec_site!r}")
+    if site == "nersc":
+        if location is not None:
+            raise BeamkitError("location applies to site='fermilab' publishing only")
+        return nersc_backend.make_beamfile(run_id=run_id, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
+                                           label=label, publish=publish)
     ident = identity.resolve(run_as, confirm, writes=publish)
     label = flavor if label is None else label
     resolved = beamfile.resolve_cuts(flavor, cuts)
