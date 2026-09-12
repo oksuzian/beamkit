@@ -56,3 +56,33 @@ def test_for_record_reads_the_record_not_the_environment(monkeypatch):
     monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/x")
     i = identity.for_record(Rec)
     assert i.mine is False and i.owner == "mu2e" and i.dev_dir is None
+
+
+def test_nersc_site_takes_the_configured_owner():
+    i = identity.resolve("self", site="nersc", owner="nersc_login")
+    assert i.site == "nersc" and i.owner == "nersc_login" and i.dev_dir is None and i.mine is True
+
+
+def test_nersc_site_refuses_mu2epro_even_confirmed():
+    with pytest.raises(identity.IdentityError, match="site='nersc' accepts run_as='self' only"):
+        identity.resolve("mu2epro", confirm=True, site="nersc", owner="x")
+
+
+def test_nersc_site_needs_an_owner():
+    with pytest.raises(identity.IdentityError, match="owner"):
+        identity.resolve("self", site="nersc")
+
+
+def test_unknown_site_refused():
+    with pytest.raises(identity.IdentityError, match="site must be one of"):
+        identity.resolve("self", site="ornl")
+
+
+def test_fermilab_site_ignores_owner_argument():
+    assert identity.resolve("self", owner="ignored").owner == "u"
+
+
+def test_for_record_carries_site():
+    class Rec:
+        run_as, owner, site = "self", "n", "nersc"
+    assert identity.for_record(Rec).site == "nersc"

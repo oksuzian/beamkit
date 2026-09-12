@@ -14,6 +14,7 @@ from typing import Optional
 from beamkit import BeamkitError
 
 RUN_AS = ("self", "mu2epro")
+SITES = ("fermilab", "nersc")
 DEV_DIR_VAR = "BEAMKIT_PRODTOOLS_DIR"
 
 
@@ -34,6 +35,7 @@ class Identity:
     run_as: str
     owner: str
     dev_dir: Optional[str]
+    site: str = "fermilab"
 
     @property
     def production(self) -> bool:
@@ -60,11 +62,22 @@ class Identity:
         return self.dev_dir
 
 
-def resolve(run_as, confirm=False, *, writes=True) -> Identity:
+def resolve(run_as, confirm=False, *, writes=True, site="fermilab", owner=None) -> Identity:
     """The identity a call runs as, refused before any side effect when it
-    cannot. `writes=False` is for calls that only read as that account."""
+    cannot. `writes=False` is for calls that only read as that account.
+    site='nersc' is one person with one sfapi client: run_as='self' only,
+    the owner comes from nersc.toml, and no prodtools checkout ships."""
+    if site not in SITES:
+        raise IdentityError(f"site must be one of {SITES}, got {site!r}")
     if run_as not in RUN_AS:
         raise IdentityError(f"run_as must be one of {RUN_AS}, got {run_as!r}")
+    if site == "nersc":
+        if run_as != "self":
+            raise IdentityError("site='nersc' accepts run_as='self' only: a NERSC run is submitted by "
+                                "one person's sfapi client and registers nothing in production SAM")
+        if not owner:
+            raise IdentityError("site='nersc' needs the owner from nersc.toml")
+        return Identity(run_as="self", owner=owner, dev_dir=None, site="nersc")
     ident = Identity(run_as=run_as, owner="mu2e" if run_as == "mu2epro" else _username(),
                      dev_dir=dev_dir_from_env())
     if writes and ident.production and not confirm:
@@ -76,4 +89,4 @@ def resolve(run_as, confirm=False, *, writes=True) -> Identity:
 def for_record(rec) -> Identity:
     """The identity a run was created as, from its record. No environment
     is consulted: the record is the truth about who owns the run."""
-    return Identity(run_as=rec.run_as, owner=rec.owner, dev_dir=None)
+    return Identity(run_as=rec.run_as, owner=rec.owner, dev_dir=None, site=getattr(rec, "site", "fermilab"))

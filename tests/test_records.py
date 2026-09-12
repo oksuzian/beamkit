@@ -51,3 +51,28 @@ def test_list_runs_refuses_unknown_state(tmp_path):
 def test_now_utc_shape():
     s = records.now_utc()
     assert s.endswith("+00:00") and len(s) == len("2026-09-03T10:00:00+00:00")
+
+
+def test_record_without_site_reads_as_fermilab(tmp_path):
+    rec = _rec()
+    d = rec.to_dict()
+    del d["site"]
+    del d["nersc"]
+    (tmp_path / "T.e470313").mkdir()
+    (tmp_path / "T.e470313" / "run.json").write_text(json.dumps(d))
+    loaded = records.load("T.e470313", tmp_path)
+    assert loaded.site == "fermilab" and loaded.nersc == {}
+
+
+def test_nersc_block_round_trips(tmp_path):
+    rec = _rec(state="partially_submitted")
+    rec.site = "nersc"
+    rec.nersc = {"run_dir": "/global/cfs/x", "jobs": [{"slurm_id": "1", "offset": 0, "count": 3}]}
+    records.save(rec, tmp_path)
+    assert records.load("T.e470313", tmp_path) == rec
+
+
+def test_new_states_are_listable(tmp_path):
+    for st in ("partially_submitted", "short", "complete"):
+        records.save(_rec(run_id=f"T.{st}", state=st), tmp_path)
+        assert [r.run_id for r in records.list_runs(tmp_path, state=st)] == [f"T.{st}"]

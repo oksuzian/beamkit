@@ -9,8 +9,12 @@ from pathlib import Path
 from beamkit import BeamkitError
 
 # needs_attention: the last tick returned prodtools rc=2 (held rows, exhausted
-# recoveries); a clean tick returns the run to submitted.
-STATES = ("enqueue_failed", "created", "submitted", "needs_attention")
+# recoveries); a clean tick returns the run to submitted. partially_submitted,
+# short, complete are NERSC-path states: partially_submitted is a submit that
+# stopped part way, short is every job terminal with fewer nts files than
+# njobs, complete is every job terminal with all nts files.
+STATES = ("enqueue_failed", "created", "submitted", "needs_attention",
+          "partially_submitted", "short", "complete")
 
 
 class RecordError(BeamkitError):
@@ -44,12 +48,17 @@ class RunRecord:
     beamkit_version: str = ""
     beamfiles: list = field(default_factory=list)
     error: str | None = None
+    site: str = "fermilab"
+    nersc: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunRecord":
+        d = dict(d)
+        d.setdefault("site", "fermilab")
+        d.setdefault("nersc", {})
         return cls(**d)
 
 
