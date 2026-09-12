@@ -467,3 +467,19 @@ def test_fermilab_site_refuses_a_walltime(fake_bridge):
     with pytest.raises(BeamkitError, match="walltime_s applies to site='nersc' only"):
         _run(walltime_s=3600)
     assert fake_bridge["push_cnf"] == []
+
+
+def test_get_server_info_reports_backends(fake_bridge, beamkit_home):
+    info = tools.get_server_info()
+    assert info["backends"]["fermilab"] == {"available": True, "detail": "prodtools at /pt"}
+    assert info["backends"]["nersc"]["available"] is False
+    assert info["backends"]["nersc"]["config"] == str(beamkit_home / "nersc.toml")
+    assert "nersc.toml" in info["backends"]["nersc"]["detail"]
+
+
+def test_get_server_info_without_prodtools_still_answers(fake_bridge, monkeypatch):
+    def gone():
+        raise tools.bridge.BridgeError("prodtools is not importable here")
+    monkeypatch.setattr(tools.bridge, "prodtools_info", gone)
+    info = tools.get_server_info()
+    assert info["backends"]["fermilab"]["available"] is False and info["prodtools"] is None

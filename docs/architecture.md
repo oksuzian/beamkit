@@ -76,8 +76,8 @@ how the test suite runs.
 
 | File | Lines | Purpose |
 | --- | --- | --- |
-| `server.py` | 68 | FastMCP registration: a name→description table, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
-| `tools.py` | 296 | `run_beamline`, `make_recoveries`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
+| `server.py` | 80 | FastMCP registration: a name→description table registering all eight tools, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
+| `tools.py` | 346 | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, dispatches on `site` (`fermilab` through prodtools, `nersc` through the NERSC backend), then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
 | `bridge.py` | 101 | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
 | `beamfile.py` | 231 | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
 | `decks.py` | 109 | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |

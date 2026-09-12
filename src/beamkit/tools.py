@@ -7,7 +7,7 @@ import sys
 from typing import Optional
 
 from beamkit import (BeamkitError, __version__, backends, beamfile, bridge, compose, decks, identity, naming,
-                     paths, publishing, records)
+                     nersc_config, paths, publishing, records)
 from beamkit.backends import nersc as nersc_backend
 from beamkit.decks import DEFAULT_DECK_URL
 
@@ -324,9 +324,23 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
 
 
 def get_server_info() -> dict:
-    """beamkit version, prodtools root and commit, directories, limits."""
+    """beamkit version, which backends this host can drive, directories, limits."""
+    try:
+        pt = bridge.prodtools_info()
+        fermilab = {"available": True, "detail": f"prodtools at {pt['root']}"}
+    except BeamkitError as e:
+        pt, fermilab = None, {"available": False, "detail": str(e)}
+    cfg_path = nersc_config.config_path(paths.home())
+    try:
+        cfg = nersc_config.load(paths.home())
+        nersc = {"available": True, "config": str(cfg_path),
+                 "detail": f"account {cfg.account}, base_dir {cfg.base_dir}, owner {cfg.owner}"}
+    except BeamkitError as e:
+        nersc = {"available": False, "config": str(cfg_path), "detail": str(e)}
     return {"name": "beamkit", "version": __version__, "python": sys.executable,
-            "prodtools": bridge.prodtools_info(), "dev_dir": identity.dev_dir_from_env(),
+            "prodtools": pt, "dev_dir": identity.dev_dir_from_env(),
+            "backends": {"fermilab": fermilab, "nersc": nersc},
             "deck_url": DEFAULT_DECK_URL,
             "decks_dir": str(paths.decks_dir()), "records_dir": str(paths.runs_dir()),
-            "beamfiles_dir": str(paths.beamfiles_dir()), "slice_max": SLICE_MAX}
+            "beamfiles_dir": str(paths.beamfiles_dir()), "slice_max": SLICE_MAX,
+            "walltime_default": nersc_backend.WALLTIME_DEFAULT}

@@ -32,15 +32,27 @@ push_file (tape for mu2epro, scratch for self) when prodtools has it.
 
 Records live under BEAMKIT_HOME/runs/<run_id>/ (entry.json, run.json);
 beamline_status merges a record with prodtools campaign_status.
+
+site="nersc" (run_beamline, make_beamfile) runs on NERSC Perlmutter
+through the IRI Facility API with no Fermilab service in the loop: the
+cnf is built here, the run is laid out under base_dir/runs/<run_id>/ on
+CFS, and one Slurm job per procs_per_node indices is submitted; outputs
+stay on CFS. It needs $BEAMKIT_HOME/nersc.toml and a NERSC Superfacility
+API client in sfapi_dir; run_as="self" only. There is no recovery on
+nersc: beamline_status reports missing indices, a new run replaces a
+short one; submit_run submits a run created with submit=false or the
+jobs a partial submit did not reach. make_beamfile on a nersc run is a
+second Slurm job that builds the beam file next to the nts files.
 """
 
 TOOLS = {
-    "run_beamline": "Pin a deck commit, register the cnf, create the campaign and submit the run through prodtools.",
+    "run_beamline": "Pin a deck commit and submit the run: through prodtools (site=\"fermilab\") or as Slurm jobs on Perlmutter through the IRI API (site=\"nersc\").",
     "make_recoveries": "One prodtools tick for this run: verify, resubmit missing indices, feed unsubmitted slices. Ledger-wide recovery pass.",
-    "beamline_status": "Run record merged with prodtools campaign status.",
+    "submit_run": "NERSC runs only: submit the Slurm jobs of a run created with submit=false, or the jobs a partial submit did not reach.",
+    "beamline_status": "Run record merged with campaign status: prodtools (site=\"fermilab\") or Slurm queue state (site=\"nersc\").",
     "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention.",
-    "beamline_outputs": "Files of the run's nts dataset with sizes and dCache paths.",
-    "make_beamfile": "Build a BLTrackFile beam file from the run's nts files; preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
+    "beamline_outputs": "Files of the run's nts dataset with sizes and paths: dCache (site=\"fermilab\") or CFS (site=\"nersc\").",
+    "make_beamfile": "Build a BLTrackFile beam file from the run's nts files, through prodtools (site=\"fermilab\") or as a Slurm job on Perlmutter (site=\"nersc\"); preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
     "get_server_info": "beamkit version, prodtools root and commit, directories, limits.",
 }
 TOOL_NAMES = tuple(TOOLS)

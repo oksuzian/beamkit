@@ -6,7 +6,7 @@ from beamkit import server, tools
 def test_tool_table_covers_every_public_tool():
     assert set(server.TOOL_NAMES) == {"run_beamline", "make_recoveries", "beamline_status",
                                       "list_beamline_runs", "beamline_outputs", "make_beamfile",
-                                      "get_server_info"}
+                                      "get_server_info", "submit_run"}
     for name, description in server.TOOLS.items():
         assert callable(getattr(tools, name)) and description
 
@@ -29,3 +29,8 @@ def test_run_as_is_required_wherever_a_call_can_write():
 
 def test_instructions_name_the_gates():
     assert "confirm" in server.INSTRUCTIONS and "ledger" in server.INSTRUCTIONS and "10000" in server.INSTRUCTIONS
+
+
+def test_instructions_name_the_nersc_path():
+    for word in ("site=\"nersc\"", "nersc.toml", "CFS", "no recovery", "submit_run"):
+        assert word in server.INSTRUCTIONS, word
