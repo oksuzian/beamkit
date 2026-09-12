@@ -127,10 +127,10 @@ image          = "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:la
 apptainer      = "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer"
 ```
 
-Compute and filesystem resource ids are looked up by name
-(`Compute Nodes`, and the CFS filesystem) on each call with one request
-each. They are never stored. The access token is minted per tool call
-and held in memory only. A private key file that is group or world
+Compute and filesystem resource ids are looked up by name (`"compute"`,
+and `"cfs"` for the filesystem) on each call with one request each.
+They are never stored. The access token is minted per tool call and
+held in memory only. A private key file that is group or world
 readable is refused.
 
 ### 4.4 Identity
@@ -190,16 +190,21 @@ before the backend dispatch is shared with the Fermilab path.
    No Idempotency-Key header is sent: NERSC's deployment answers 501 "no
    idempotency store is configured" when one is present; the run
    record's job list is what prevents a duplicate submit.
-7. The record gains `site` and a `nersc` block:
+7. The record gains `site`, keeps `slice_size` at the top level (the
+   procs_per_node the run was created with, fixed for its lifetime and
+   what `submit_run` slices by — not the live `nersc.toml`, which may
+   change before a later submit), and gains a `nersc` block:
 
    ```json
    "site": "nersc",
+   "slice_size": 128,
    "nersc": {
-     "base_dir": "...",
      "run_dir": ".../runs/<run_id>",
-     "account": "m4599", "qos": "regular", "procs_per_node": 128,
+     "cnf": "cnf.<owner>.<tag>.<dsconf>.0.tar",
+     "walltime_s": 172800,
      "jobs": [{"slurm_id": "58197742", "offset": 0, "count": 128, "submitted": "..."}],
-     "config": {"...": "the nersc.toml values the run was submitted with"}
+     "config": {"base_dir": "...", "account": "m4599", "qos": "regular",
+                "owner": "u", "procs_per_node": 128, "...": "every nersc.toml value at create time"}
    }
    ```
 
@@ -354,8 +359,8 @@ All loud, none retried, every message names the next action.
 - 401 from the token endpoint or the API: names the two usual causes,
   source IP not in the client's allow list, and the 48 h client
   lifetime.
-- Upload over 5 MB, run directory already present on CFS, `qos` not in
-  the facility's list: refused before any remote write.
+- Upload over 5 MB, run directory already present on CFS: refused
+  before any remote write.
 - Slurm job k fails to submit after jobs 0 to k-1 succeeded: record
   saved with the jobs that exist, state `partially_submitted`, error
   names k and the API detail. `submit_run` on such a run submits only
