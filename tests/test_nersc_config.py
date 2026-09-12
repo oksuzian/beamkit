@@ -1,4 +1,6 @@
+import importlib
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,24 @@ def test_no_key_file_is_refused(beamkit_home, sfapi):
     _write(beamkit_home, GOOD.format(sfapi=sfapi))
     with pytest.raises(nc.ConfigError, match="priv_key.pem or priv_key.jwk"):
         nc.load(beamkit_home).key_file()
+
+
+def test_missing_tomli_still_imports_and_gives_an_actionable_error(beamkit_home, sfapi, monkeypatch):
+    """tools.py imports nersc_config at module level unconditionally (so
+    get_server_info can report NERSC availability even with no config), and
+    the Fermilab launcher runs under a Python 3.10 venv that never needed
+    tomli. Neither import may fail just because tomli is absent; only an
+    actual load() call should need it, and then with a fix-it message."""
+    import beamkit.tools as tools_mod
+
+    monkeypatch.setitem(sys.modules, "tomli", None)
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    try:
+        importlib.reload(nc)
+        importlib.reload(tools_mod)
+        _write(beamkit_home, GOOD.format(sfapi=sfapi))
+        with pytest.raises(nc.ConfigError, match="tomli"):
+            nc.load(beamkit_home)
+    finally:
+        importlib.reload(nc)
+        importlib.reload(tools_mod)

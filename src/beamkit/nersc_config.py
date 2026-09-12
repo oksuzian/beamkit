@@ -8,11 +8,6 @@ from pathlib import Path
 
 from beamkit import BeamkitError
 
-if sys.version_info < (3, 11):
-    import tomli as tomllib
-else:
-    import tomllib
-
 REQUIRED = ("api", "sfapi_dir", "account", "base_dir", "qos", "owner")
 DEFAULTS = {
     "procs_per_node": 128,
@@ -67,6 +62,23 @@ def config_path(home) -> Path:
     return Path(home) / "nersc.toml"
 
 
+def _toml():
+    """The stdlib tomllib (3.11+) or the tomli backport, imported here
+    rather than at module level: tools.py imports nersc_config unconditionally
+    (get_server_info reports NERSC availability even without a config), and
+    the Fermilab launcher runs under a Python 3.10 venv that has never
+    needed tomli installed."""
+    if sys.version_info < (3, 11):
+        try:
+            import tomli as tomllib
+        except ImportError as e:
+            raise ConfigError("reading nersc.toml needs tomli on Python < 3.11: "
+                              "pip install beamkit (or pip install tomli)") from e
+    else:
+        import tomllib
+    return tomllib
+
+
 def _text(d, key):
     v = d[key]
     if not isinstance(v, str) or not v.strip():
@@ -79,6 +91,7 @@ def load(home) -> NerscConfig:
     if not path.is_file():
         raise ConfigError(f"no NERSC config at {path}; create it with keys "
                           f"{', '.join(REQUIRED)} (optional: {', '.join(DEFAULTS)})")
+    tomllib = _toml()
     try:
         raw = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:
