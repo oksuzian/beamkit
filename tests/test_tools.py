@@ -469,6 +469,33 @@ def test_fermilab_site_refuses_a_walltime(fake_bridge):
     assert fake_bridge["push_cnf"] == []
 
 
+def test_submit_run_refuses_a_fermilab_record(fake_bridge, beamkit_home, tmp_path):
+    """submit_run is the NERSC backend's tool; a Fermilab record submits
+    through make_recoveries instead."""
+    _run()
+    sfapi = tmp_path / "sfapi"
+    sfapi.mkdir()
+    (sfapi / "client_id").write_text("abcdefghijklm")
+    key = sfapi / "priv_key.pem"
+    key.write_text("-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n")
+    key.chmod(0o400)
+    beamkit_home.mkdir(parents=True, exist_ok=True)
+    (beamkit_home / "nersc.toml").write_text(
+        f'api = "https://api.iri.nersc.gov/api/v2"\nsfapi_dir = "{sfapi}"\naccount = "m4599"\n'
+        f'base_dir = "/global/cfs/cdirs/m4599/Users/u/beamkit"\nqos = "debug"\nowner = "u"\n')
+    with pytest.raises(BeamkitError, match="is a 'fermilab' run; submit_run is the NERSC backend's tool"):
+        tools.submit_run("T.e470313", "self")
+
+
+def test_nersc_site_refuses_a_slice_size(fake_bridge):
+    """slice_size is the Fermilab-only knob; a NERSC run is sliced by
+    procs_per_node from nersc.toml. The refusal must land before the NERSC
+    backend is even reached (no nersc.toml needed for this test)."""
+    with pytest.raises(BeamkitError, match="slice_size applies to site='fermilab' only"):
+        _run(site="nersc", slice_size=5)
+    assert fake_bridge["push_cnf"] == []
+
+
 def test_get_server_info_reports_backends(fake_bridge, beamkit_home):
     info = tools.get_server_info()
     assert info["backends"]["fermilab"] == {"available": True, "detail": "prodtools at /pt"}
