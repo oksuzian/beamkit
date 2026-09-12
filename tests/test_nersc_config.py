@@ -117,3 +117,13 @@ def test_missing_tomli_still_imports_and_gives_an_actionable_error(beamkit_home,
     finally:
         importlib.reload(nc)
         importlib.reload(tools_mod)
+
+
+def test_toml_import_guard_is_symmetric_on_py311(monkeypatch):
+    """The >=3.11 branch imports stdlib tomllib; if that's ever missing
+    (e.g. a stripped-down interpreter) it must convert to ConfigError too,
+    not propagate a bare ImportError out of get_server_info()."""
+    monkeypatch.setattr(sys, "version_info", (3, 11, 0))
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    with pytest.raises(nc.ConfigError, match="tomli"):
+        nc._toml()

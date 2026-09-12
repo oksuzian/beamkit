@@ -49,11 +49,11 @@ TOOLS = {
     "run_beamline": "Pin a deck commit and submit the run: through prodtools (site=\"fermilab\") or as Slurm jobs on Perlmutter through the IRI API (site=\"nersc\").",
     "make_recoveries": "One prodtools tick for this run: verify, resubmit missing indices, feed unsubmitted slices. Ledger-wide recovery pass.",
     "submit_run": "NERSC runs only: submit the Slurm jobs of a run created with submit=false, or the jobs a partial submit did not reach.",
-    "beamline_status": "Run record merged with campaign status: prodtools (site=\"fermilab\") or Slurm queue state (site=\"nersc\").",
+    "beamline_status": "Run record merged with campaign status: prodtools (site=\"fermilab\") or Slurm job states and CFS output counts, expected/nts/logs/missing (site=\"nersc\").",
     "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention.",
     "beamline_outputs": "Files of the run's nts dataset with sizes and paths: dCache (site=\"fermilab\") or CFS (site=\"nersc\").",
     "make_beamfile": "Build a BLTrackFile beam file from the run's nts files, through prodtools (site=\"fermilab\") or as a Slurm job on Perlmutter (site=\"nersc\"); preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
-    "get_server_info": "beamkit version, prodtools root and commit, directories, limits.",
+    "get_server_info": "beamkit version, backends (fermilab/nersc availability), prodtools root and commit, directories, limits, walltime_default.",
 }
 TOOL_NAMES = tuple(TOOLS)
 

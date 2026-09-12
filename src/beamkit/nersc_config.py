@@ -68,14 +68,14 @@ def _toml():
     (get_server_info reports NERSC availability even without a config), and
     the Fermilab launcher runs under a Python 3.10 venv that has never
     needed tomli installed."""
-    if sys.version_info < (3, 11):
-        try:
+    try:
+        if sys.version_info < (3, 11):
             import tomli as tomllib
-        except ImportError as e:
-            raise ConfigError("reading nersc.toml needs tomli on Python < 3.11: "
-                              "pip install beamkit (or pip install tomli)") from e
-    else:
-        import tomllib
+        else:
+            import tomllib
+    except ImportError as e:
+        raise ConfigError("reading nersc.toml needs tomli on Python < 3.11: "
+                          "pip install beamkit (or pip install tomli)") from e
     return tomllib
 
 

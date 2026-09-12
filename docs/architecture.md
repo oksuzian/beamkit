@@ -21,7 +21,7 @@ graph TB
 
     subgraph beamkit["beamkit"]
         SRV["<b>server.py</b><br/>FastMCP wiring — registers tools.py's<br/>functions as they are. Imports mcp only<br/>inside create_mcp_server()."]
-        TOOLS["<b>tools.py</b><br/>The seven tools. Orchestration only:<br/>validate, then call the leaves in order."]
+        TOOLS["<b>tools.py</b><br/>The eight tools. Orchestration only:<br/>validate, then call the leaves in order."]
 
         subgraph rules["Rules — pure, no I/O"]
             IDN["<b>identity.py</b><br/>what run_as means: owner, ledger,<br/>confirm, what may ship"]
