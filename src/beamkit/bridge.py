@@ -8,7 +8,8 @@ from beamkit.decks import DeckError, _git
 
 _HINT = ("prodtools is not importable here. Start beamkit through "
          "scripts/start_mcp.sh with BEAMKIT_PRODTOOLS_ROOT set to a prodtools "
-         "checkout whose mcp/.venv is installed")
+         "checkout whose mcp/.venv is installed, or through a cvmfs release's "
+         "scripts/beamkit-mcp-cvmfs")
 
 
 class BridgeError(BeamkitError):

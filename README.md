@@ -19,10 +19,10 @@ Dev venv:
 .venv/bin/python -m pytest --version
 ```
 
-beamkit declares no runtime Python dependencies of its own: `mcp` and
-`htcondor` come from the prodtools MCP venv at runtime, not from this
-package's venv, so the dev venv above is enough to run the test suite
-(`.venv/bin/python -m pytest tests -q`) without `mcp` installed.
+Runtime dependencies are `mcp<2` (2.x renamed FastMCP), `requests`,
+`authlib` and, below Python 3.11, `tomli`. `htcondor` is not declared:
+the Fermilab path reads the grid queue through prodtools, whose MCP venv
+(or the cvmfs release venv below) carries the wheel matching the pool.
 
 Running the server needs `BEAMKIT_PRODTOOLS_ROOT` set to a prodtools
 checkout whose `mcp/.venv` is installed (see prodtools'
@@ -39,6 +39,39 @@ three `OK:` lines on success.
 For another checkout, edit the `command` and
 `env.BEAMKIT_PRODTOOLS_ROOT` paths in `.mcp.json` — it is checked in
 with this personal checkout's absolute paths.
+
+## Install from cvmfs (any host that mounts the Mu2e repo)
+
+One release for every gpvm, no per-user install. A release directory is
+the tagged tree plus a `.venv` built at its final path with the ops-019
+spack python, so it resolves on any Linux host that mounts
+`/cvmfs/mu2e.opensciencegrid.org` (a Mac runs it inside a Linux
+container with cvmfs bind-mounted). Register:
+
+```json
+{"mcpServers": {"beamkit": {"command":
+  "/cvmfs/mu2e.opensciencegrid.org/bin/beamkit/current/scripts/beamkit-mcp-cvmfs"}}}
+```
+
+`scripts/beamkit-mcp-cvmfs` sets up the Mu2e ops environment, puts the
+cvmfs prodtools `current` release on `PYTHONPATH` (override with
+`BEAMKIT_PRODTOOLS_ROOT`) and starts the server from the release venv;
+`--check` prints the same three `OK:` lines as `start_mcp.sh`. The NERSC
+path reads `$BEAMKIT_HOME/nersc.toml` exactly as on a laptop.
+
+Publishing a release, as `cvmfsmu2e@oasiscfs.fnal.gov` (about an hour
+to propagate):
+
+```bash
+bin/install_beamkit.sh -n -c 25.0 v0.3.0          # dry run: tag exists, path free
+bin/install_beamkit.sh -c 25.0 v0.3.0             # transaction, venv, current ->, publish
+```
+
+`-c` is the pool's htcondor major.minor (`condor_version` on a gpvm);
+`-N` builds a NERSC-only venv without it. Rehearse without cvmfs:
+`bin/install_beamkit.sh -t /some/dir -s . -c 25.0 vX.Y.Z` installs the
+local checkout into `/some/dir` and `/some/dir/current/scripts/beamkit-mcp-cvmfs --check`
+must pass.
 
 ## Tools
 
