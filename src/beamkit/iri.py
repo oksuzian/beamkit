@@ -158,8 +158,8 @@ class IriClient:
     def _compute(self):
         return self.resource_id("compute", "compute")
 
-    def submit(self, spec, idem_key) -> str:
-        r = self._req("POST", f"/compute/job/{self._compute()}", headers={"Idempotency-Key": idem_key}, json=spec)
+    def submit(self, spec) -> str:
+        r = self._req("POST", f"/compute/job/{self._compute()}", json=spec)
         jid = r.get("id") if isinstance(r, dict) else None
         if not jid:
             raise IriError(f"submit returned no job id: {r!r}")

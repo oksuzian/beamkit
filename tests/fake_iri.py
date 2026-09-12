@@ -100,8 +100,7 @@ class FakeSession:
                                           "detail": "sbatch: error: Batch job submission failed"})
             jid = str(self.next_job)
             self.next_job += 1
-            self.jobs[jid] = {"state": "queued", "exit_code": 0, "spec": kw["json"],
-                              "idem": kw["headers"].get("Idempotency-Key")}
+            self.jobs[jid] = {"state": "queued", "exit_code": 0, "spec": kw["json"]}
             return FakeResponse(200, {"id": jid})
         m = re.match(rf"^/compute/status/{COMPUTE}/(\d+)$", path)
         if m:

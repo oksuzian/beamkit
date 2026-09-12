@@ -65,6 +65,8 @@ only. The Fermilab path is untouched.
   `task_uri`. `POST /filesystem/mkdir/{id}`, `ls`, `upload`, `download`
   all follow that shape. Uploading into a directory that does not exist
   fails with `Error: 400: Error downloading: No such file`.
+- The API rejects an `Idempotency-Key` header with 501 unless the
+  facility configures an idempotency store; NERSC has not.
 
 ## 4. Laptop side
 
@@ -135,8 +137,12 @@ readable is refused.
 
 `site="nersc"` accepts `run_as="self"` only; `run_as="mu2epro"` at NERSC
 is refused before any network call. The owner field in every file name
-is the NERSC login returned by the API's user endpoint, so a user with no
-Mu2e account gets names in the Mu2e grammar under their own name.
+is the `owner` key of `nersc.toml`, so a user with no Mu2e account gets
+names in the Mu2e grammar under their own name. The API's whoami
+endpoint, called with a client-credential token, reports the numeric
+NERSC account id (for example `{"username": "105241"}`), not the login,
+so it cannot supply the owner; `get_server_info` uses it for
+connectivity only.
 `Identity` gains a `site` field; `identity.resolve` takes `site` and
 applies these rules. The record stores both.
 
@@ -181,7 +187,9 @@ before the backend dispatch is shared with the Fermilab path.
    `custom_attributes {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}`,
    and `duration = min(walltime_s, events_per_job * 2 + 900)` seconds where
    `walltime_s` is a new optional tool parameter defaulting to 172800.
-   An Idempotency-Key of `<run_id>/<k>` is sent with each submit.
+   No Idempotency-Key header is sent: NERSC's deployment answers 501 "no
+   idempotency store is configured" when one is present; the run
+   record's job list is what prevents a duplicate submit.
 7. The record gains `site` and a `nersc` block:
 
    ```json

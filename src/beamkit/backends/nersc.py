@@ -100,7 +100,7 @@ def _submit_missing(rec, cfg, client, runs_dir):
     for k, (offset, count) in enumerate(todo, start=len(have)):
         spec = job_spec(cfg, run_id=rec.run_id, run_dir=rd, offset=offset, count=count, duration=dur)
         try:
-            jid = client.submit(spec, idem_key=f"{rec.run_id}/{offset}")
+            jid = client.submit(spec)
         except iri.IriError as e:
             rec.state, rec.error = "partially_submitted", f"job {k} of {total} (offset {offset}) failed to submit: {e}"
             records.save(rec, runs_dir)
@@ -316,7 +316,7 @@ def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dic
     spec["arguments"] = [f"{rd}/beamfiles/{job_sh.name}"]
     spec["stdout_path"], spec["stderr_path"] = f"{rd}/slurm/beamfile.{label}.out", f"{rd}/slurm/beamfile.{label}.err"
     spec["environment"] = {}
-    jid = client.submit(spec, idem_key=f"{rec.run_id}/beamfile/{label}")
+    jid = client.submit(spec)
     entry = {"run_id": run_id, "flavor": flavor, "label": label, "cuts": resolved, "plane": plane,
              "slurm_id": jid, "state": "submitted", "exit_code": None, "n_files_at_submit": counts["nts"],
              "path": stem + ".txt", "sidecar": stem + ".json", "sha256": None, "size": None, "rows": None,

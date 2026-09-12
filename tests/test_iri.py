@@ -78,9 +78,8 @@ def test_upload_into_missing_dir_surfaces_the_task_error(client, tmp_path):
 
 
 def test_submit_and_status(client):
-    jid = client.submit({"name": "x"}, idem_key="T.e470313/0")
+    jid = client.submit({"name": "x"})
     assert jid == "58197742"
-    assert client.fake.jobs[jid]["idem"] == "T.e470313/0"
     assert client.status(jid)["state"] == "queued"
     client.fake.jobs[jid]["state"] = "completed"
     st = client.status(jid)
@@ -90,7 +89,7 @@ def test_submit_and_status(client):
 def test_http_error_carries_status_and_detail(client):
     client.fake.fail_submit_at = 0
     with pytest.raises(iri.IriError) as e:
-        client.submit({"name": "x"}, idem_key="k")
+        client.submit({"name": "x"})
     assert e.value.status == 500 and "sbatch: error" in e.value.detail
 
 
