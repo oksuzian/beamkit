@@ -10,11 +10,10 @@ from beamkit import BeamkitError
 
 UPLOAD_MAX = 5_242_880
 TOKEN_URL = "https://oidc.nersc.gov/c2id/token"
-TERMINAL = ("completed", "failed", "canceled")
 _AUTH_HINT = ("the API refused the token. Two usual causes: this host's source IP is not in the "
               "client's allow list (a red client is pinned to at most two IPs), or the client "
               "expired (48 h until NERSC's security review extends it to 30 d). Check the client in "
-              "Iris -> Superfacility API Clients")
+              "Iris -> Superfacility API Clients, or the 600 s access token expired mid-call")
 
 
 class IriError(BeamkitError):
@@ -76,14 +75,25 @@ class IriClient:
         return h
 
     def _req(self, method, path, headers=None, **kw):
-        url = path if path.startswith("http") else f"{self.cfg.api}{path}"
-        resp = self._session.request(method, url, headers=self._headers(headers), timeout=120, **kw)
-        if not resp.ok:
-            detail = _detail(resp)
-            hint = f"; {_AUTH_HINT}" if resp.status_code in (401, 403) else ""
-            raise IriError(f"{method} {path} -> {resp.status_code}: {detail}{hint}",
-                           status=resp.status_code, detail=detail)
-        return resp.json() if resp.text else {}
+        if path.startswith("http"):
+            if not path.startswith(self.cfg.api):
+                raise IriError(f"{method} {path}: refusing to follow a URL outside the configured "
+                               f"API base {self.cfg.api}")
+            url = path
+        else:
+            url = f"{self.cfg.api}{path}"
+        try:
+            resp = self._session.request(method, url, headers=self._headers(headers), timeout=120, **kw)
+            if not resp.ok:
+                detail = _detail(resp)
+                hint = f"; {_AUTH_HINT}" if resp.status_code in (401, 403) else ""
+                raise IriError(f"{method} {path} -> {resp.status_code}: {detail}{hint}",
+                               status=resp.status_code, detail=detail)
+            return resp.json() if resp.text else {}
+        except IriError:
+            raise
+        except Exception as e:
+            raise IriError(f"{method} {path}: {type(e).__name__}: {e}") from e
 
     # --- account and resources
     def whoami(self) -> dict:
@@ -105,7 +115,10 @@ class IriClient:
 
     # --- tasks
     def wait_task(self, resp, timeout_s=600, poll_s=3) -> dict:
-        tid, uri = resp["task_id"], resp["task_uri"]
+        try:
+            tid, uri = resp["task_id"], resp["task_uri"]
+        except Exception as e:
+            raise IriError(f"wait_task: malformed task response {resp!r}: {type(e).__name__}: {e}") from e
         deadline = time.monotonic() + timeout_s
         while True:
             t = self._req("GET", uri)
