@@ -22,5 +22,8 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["beamkit", "beamkit.*"]
 
+[tool.setuptools.package-data]
+beamkit = ["templates/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

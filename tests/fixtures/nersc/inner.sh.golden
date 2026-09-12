@@ -1,0 +1,21 @@
+#!/bin/bash
+# beamkit NERSC backend, inside fnal-wn-el9. Per-index log first, so 128
+# tasks on one node never interleave; it lands whether or not g4bl succeeds.
+SEQ=$(printf %08d "$IDX")
+exec > "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313/out/log.u.T.e470313.$SEQ.log" 2>&1
+set -x
+W=/tmp/bk.T.e470313.$IDX; mkdir -p "$W"; cd "$W" || exit 2
+tar xf "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313"/cnf.*.tar || exit 2
+FIRST=$((IDX*10+1))
+HISTO="$W/nts.u.T.e470313.$SEQ.root"
+unset SPACK_ENV PYTHONHOME PYTHONPATH PYTHONNOUSERSITE
+source /cvmfs/mu2e.opensciencegrid.org/setupmu2e-art.sh > /dev/null 2>&1
+eval "$(spack load --sh g4beamline)"
+cd work
+g4bl Mu2E.in viewer=none First_Event=$FIRST Num_Events=10 histoFile=$HISTO epsMax=0.01
+rc=$?
+[ $rc -eq 0 ] && mv "$HISTO" "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313/out/"
+sha256sum "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313/out/nts.u.T.e470313.$SEQ.root" 2>/dev/null
+echo "BK_DONE idx=$IDX rc=$rc"
+rm -rf "$W"
+exit $rc

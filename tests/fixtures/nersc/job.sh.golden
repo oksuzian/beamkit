@@ -1,0 +1,6 @@
+#!/bin/bash
+# beamkit NERSC backend: one srun task = one g4bl index. Runs native on the
+# SLES node and enters the Mu2e EL9 image itself (the API's container block
+# cannot bind two paths). Rendered by beamkit; nothing is looked up at run time.
+IDX=$((BK_OFFSET + SLURM_PROCID))
+exec "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer" exec -B /cvmfs -B /global/cfs --env IDX=$IDX "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest" /bin/bash "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313/inner.sh"
