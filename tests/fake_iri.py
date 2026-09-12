@@ -30,7 +30,7 @@ class FakeSession:
     def __init__(self):
         self.calls = []
         self.files = {}        # remote path -> bytes
-        self.dirs = set()
+        self.dirs = {"/global/cfs/cdirs/m4599/Users/u"}
         self.jobs = {}         # job id -> {"state", "exit_code", "spec"}
         self.tasks = {}        # task id -> result dict or ("failed", detail)
         self.next_job = 58197742
@@ -73,6 +73,12 @@ class FakeSession:
                 return self._task({"output": f"Uploaded {remote}"})
             p = kw["json"]["path"]
             if op == "mkdir":
+                if p in self.dirs:
+                    return self._task({"output": None})
+                parent = p.rsplit("/", 1)[0]
+                if parent not in self.dirs:
+                    return self._task(("failed", f"Exception: Error: 404: mkdir: cannot create directory "
+                                                 f"'{p}': No such file or directory"))
                 self.dirs.add(p)
                 return self._task({"output": None})
             if op == "ls":

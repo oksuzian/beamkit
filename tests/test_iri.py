@@ -41,6 +41,10 @@ def test_unknown_resource_name_lists_what_exists(client):
 
 
 def test_mkdir_ls_upload_download_round_trip(client, tmp_path):
+    # The API's mkdir is not -p: build the parents in order first, same as
+    # a real caller (or _remote_layout) must.
+    client.mkdir("/global/cfs/cdirs/m4599/Users/u/beamkit")
+    client.mkdir("/global/cfs/cdirs/m4599/Users/u/beamkit/runs")
     d = "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313"
     client.mkdir(d)
     assert client.exists(d) and not client.exists(d + "/nope")
@@ -50,6 +54,11 @@ def test_mkdir_ls_upload_download_round_trip(client, tmp_path):
     names = [e["name"] for e in client.ls(d)]
     assert names == [d + "/job.sh"]
     assert client.download(d + "/job.sh") == "#!/bin/bash\necho hi\n"
+
+
+def test_mkdir_without_parent_surfaces_the_api_error(client):
+    with pytest.raises(iri.IriError, match="No such file or directory"):
+        client.mkdir("/global/cfs/cdirs/m4599/Users/u/absent/child")
 
 
 def test_upload_over_cap_is_refused_before_any_request(client, tmp_path):

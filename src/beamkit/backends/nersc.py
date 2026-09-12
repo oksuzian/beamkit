@@ -77,8 +77,11 @@ def _retryable(run_id, runs_dir) -> bool:
     return rec.site == "nersc" and rec.state == "enqueue_failed" and not rec.nersc.get("jobs")
 
 
-def _remote_layout(client, rd, uploads):
-    for d in (rd, f"{rd}/out", f"{rd}/slurm", f"{rd}/beamfiles"):
+def _remote_layout(cfg, client, rd, uploads):
+    """The API's mkdir is not -p: build every component from cfg.base_dir
+    down (base_dir, base_dir/runs, the run dir, then its subdirs) in
+    order, since a fresh base_dir has neither yet."""
+    for d in (cfg.base_dir, f"{cfg.base_dir}/runs", rd, f"{rd}/out", f"{rd}/slurm", f"{rd}/beamfiles"):
         if not client.exists(d):
             client.mkdir(d)
     for local, remote in uploads:
@@ -162,8 +165,8 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
         (rdir / "inner.sh").write_text(nersc_templates.render_inner(
             cfg, run_id=run_id, run_dir=rd, owner=ident.owner, tag=tag, dsconf=dsconf,
             events_per_job=events_per_job, main_input=main_input, params=params))
-        _remote_layout(client, rd, [(local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
-                                    (rdir / "inner.sh", f"{rd}/inner.sh")])
+        _remote_layout(cfg, client, rd, [(local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
+                                         (rdir / "inner.sh", f"{rd}/inner.sh")])
     except BeamkitError as e:
         rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
         records.save(rec, runs_dir)

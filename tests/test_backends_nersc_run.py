@@ -37,7 +37,6 @@ def nersc_home(beamkit_home, tmp_path):
 @pytest.fixture
 def fake(monkeypatch, deck, nersc_home):
     s = FakeSession()
-    s.dirs.update({BASE, BASE + "/runs"})
     made = []
     def make_client(cfg):
         made.append(cfg)
@@ -75,6 +74,16 @@ def test_happy_path_layout_record_and_jobs(fake, nersc_home):
     with tarfile.open(local) as t:
         assert "jobpars.json" in t.getnames() and "work/Mu2E.in" in t.getnames()
     assert json.loads((nersc_home / "runs" / "T.e470313" / "run.json").read_text())["nersc"]["walltime_s"] == 172800
+
+
+def test_layout_creates_base_and_runs_dirs_on_a_fresh_cfs(fake):
+    """The API's mkdir is not -p: on a brand-new base_dir neither it nor
+    base_dir/runs exists yet, and the layout must create both, not just
+    the run dir and its subdirectories."""
+    rec = _run(njobs=1)
+    rd = f"{BASE}/runs/T.e470313"
+    assert rec["state"] == "submitted"
+    assert {BASE, BASE + "/runs", rd, rd + "/out", rd + "/slurm", rd + "/beamfiles"} <= fake.dirs
 
 
 def test_dsconf_collision_probes_the_remote_run_dir(fake):
