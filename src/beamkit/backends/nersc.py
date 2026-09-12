@@ -48,7 +48,6 @@ def job_spec(cfg, *, run_id, run_dir, offset, count, duration) -> dict:
 
 from beamkit import (__version__, compose, decks, identity, iri, naming, nersc_cnf, nersc_config,
                      nersc_templates, paths, records)
-from beamkit.decks import DEFAULT_DECK_URL   # noqa: F401  (kept for callers that pass the default)
 
 make_client = iri.IriClient
 SUBMITTABLE = ("created", "partially_submitted")
@@ -90,21 +89,29 @@ def _remote_layout(cfg, client, rd, uploads):
 
 def _submit_missing(rec, cfg, client, runs_dir):
     """Submit every slice whose offset the record does not carry, in order.
-    A failure part way is saved as partially_submitted and raised; the next
+    Slicing is by the record's own slice_size (fixed at create time), not
+    cfg.procs_per_node: an operator lowering procs_per_node between a
+    partial submit and this call must not re-slice the run underneath the
+    jobs already on Slurm, which would submit some indices twice. A failure
+    part way is saved as partially_submitted and raised; the next
     submit_run continues from there."""
     have = {j["offset"] for j in rec.nersc["jobs"]}
-    todo = [(o, c) for o, c in slices(rec.njobs, cfg.procs_per_node) if o not in have]
-    total = len(slices(rec.njobs, cfg.procs_per_node))
+    all_slices = slices(rec.njobs, rec.slice_size)
+    todo = [(o, c) for o, c in all_slices if o not in have]
+    total = len(all_slices)
     rd = rec.nersc["run_dir"]
     dur = duration_s(rec.events_per_job, rec.nersc["walltime_s"])
     for k, (offset, count) in enumerate(todo, start=len(have)):
         spec = job_spec(cfg, run_id=rec.run_id, run_dir=rd, offset=offset, count=count, duration=dur)
         try:
             jid = client.submit(spec)
-        except iri.IriError as e:
-            rec.state, rec.error = "partially_submitted", f"job {k} of {total} (offset {offset}) failed to submit: {e}"
+        except Exception as e:
+            rec.state, rec.error = "partially_submitted", (
+                f"job {k} of {total} (offset {offset}) failed to submit: {e}; check squeue for "
+                f"beamkit.{rec.run_id}.{offset} before submit_run")
             records.save(rec, runs_dir)
             raise BeamkitError(f"run {rec.run_id}: job {k} of {total} (offset {offset}) failed to submit: {e}; "
+                               f"check squeue for beamkit.{rec.run_id}.{offset} before submit_run; "
                                f"{len(rec.nersc['jobs'])} job(s) are running; submit_run({rec.run_id!r}, "
                                f"'self') submits the rest") from e
         rec.nersc["jobs"].append({"slurm_id": jid, "offset": offset, "count": count,
@@ -167,7 +174,7 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
             events_per_job=events_per_job, main_input=main_input, params=params))
         _remote_layout(cfg, client, rd, [(local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
                                          (rdir / "inner.sh", f"{rd}/inner.sh")])
-    except BeamkitError as e:
+    except Exception as e:
         rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
         records.save(rec, runs_dir)
         raise BeamkitError(f"run {run_id}: nothing was submitted ({e}); fix the cause and call again, "
@@ -187,7 +194,12 @@ def submit_run(run_id, run_as) -> dict:
                            f"(the Fermilab path submits through make_recoveries)")
     if rec.state not in SUBMITTABLE:
         raise BeamkitError(f"run {run_id} is in state {rec.state!r}; submit_run applies to {SUBMITTABLE}")
-    _submit_missing(rec, cfg, make_client(cfg), runs_dir)
+    client = make_client(cfg)
+    rd = rec.nersc["run_dir"]
+    if not client.exists(f"{rd}/inner.sh"):
+        raise BeamkitError(f"run {run_id}: remote layout at {rd} is missing inner.sh (job.sh cannot run); "
+                           f"run run_beamline again")
+    _submit_missing(rec, cfg, client, runs_dir)
     return rec.to_dict()
 
 
@@ -291,8 +303,8 @@ def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dic
     if rec.site != "nersc":
         raise BeamkitError(f"run {run_id} is a {rec.site!r} run; pass site={rec.site!r}")
     if any(b["label"] == label for b in rec.beamfiles):
-        raise BeamkitError(f"run {run_id}: label {label!r} already has a beam file; a beam file is never "
-                           f"overwritten (pick another label)")
+        raise BeamkitError(f"run {run_id}: label {label!r} is already spent by a submitted beam-file job; "
+                           f"a beam file is never overwritten (pick another label)")
     client = make_client(cfg)
     counts = out_counts(client, rec)
     if counts["nts"] == 0:

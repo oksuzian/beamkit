@@ -84,6 +84,19 @@ def test_beamfile_job_failure_is_recorded(fake):
     assert bf["state"] == "failed" and bf["exit_code"] == 3
 
 
+def test_beamfile_job_canceled_state_is_recorded_as_failed(fake):
+    """'canceled' is terminal, same as 'failed', and shares its branch in
+    _refresh_beamfiles; untested until now. A canceled job wrote no
+    sidecar."""
+    _run(njobs=1)
+    _land(fake, 0)
+    tools.make_beamfile("T.e470313", "bm", "self", site="nersc")
+    fake.jobs["58197743"]["state"] = "canceled"
+    fake.jobs["58197743"]["exit_code"] = None
+    bf = tools.beamline_status("T.e470313")["record"]["beamfiles"][0]
+    assert bf["state"] == "failed" and bf["exit_code"] is None
+
+
 def test_beamfile_job_failure_with_a_readable_sidecar_still_fails(fake):
     """A Slurm job can end 'failed' even though its sidecar downloads and
     parses fine (e.g. a non-zero exit after the JSON was already written);
@@ -107,7 +120,7 @@ def test_label_is_never_reused(fake):
     _run(njobs=1)
     _land(fake, 0)
     tools.make_beamfile("T.e470313", "bm", "self", site="nersc")
-    with pytest.raises(BeamkitError, match="label 'bm' already has a beam file"):
+    with pytest.raises(BeamkitError, match="label 'bm' is already spent by a submitted beam-file job"):
         tools.make_beamfile("T.e470313", "bm", "self", site="nersc")
 
 
@@ -115,6 +128,14 @@ def test_no_nts_files_is_refused_with_counts(fake):
     _run(njobs=2)
     with pytest.raises(BeamkitError, match="0 of 2 nts files"):
         tools.make_beamfile("T.e470313", "bm", "self", site="nersc")
+
+
+def test_location_refused_on_nersc(fake):
+    """location selects a Fermilab publish target (tape/scratch); a NERSC
+    beam file always lands in beamfiles/ on CFS."""
+    _run(njobs=1)
+    with pytest.raises(BeamkitError, match="location applies to site='fermilab' publishing only"):
+        tools.make_beamfile("T.e470313", "bm", "self", site="nersc", location="scratch")
 
 
 def test_publish_refused_on_nersc(fake):

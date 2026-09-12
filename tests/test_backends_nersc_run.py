@@ -5,7 +5,7 @@ import pytest
 
 from beamkit import BeamkitError, decks, iri, tools
 from beamkit.backends import nersc
-from tests.fake_iri import FakeResponse, FakeSession
+from tests.fake_iri import COMPUTE, FakeResponse, FakeSession
 
 SHA = "e470313" + "0" * 33
 BASE = "/global/cfs/cdirs/m4599/Users/u/beamkit"
@@ -181,3 +181,56 @@ def test_upload_failure_after_mkdir_retries_the_same_run_id_no_new_dsconf(fake):
 
     rec2 = _run(njobs=1)
     assert rec2["run_id"] == "T.e470313" and rec2["state"] == "submitted"
+
+
+def test_transport_exception_during_layout_lands_enqueue_failed_and_is_retryable(fake, monkeypatch):
+    """Not just BeamkitError: any exception during the layout block (a local
+    fault, a bug, a raw non-IriError exception) must land the record
+    enqueue_failed and be wrapped as a BeamkitError, so it is never left
+    'created' (falsely SUBMITTABLE) and the retry reuses the run id."""
+    orig = nersc.nersc_templates.render_inner
+    def boom(*a, **kw):
+        raise ValueError("boom: disk full")
+    monkeypatch.setattr(nersc.nersc_templates, "render_inner", boom)
+    with pytest.raises(BeamkitError, match="nothing was submitted"):
+        _run(njobs=1)
+    rec = tools.beamline_status("T.e470313")["record"]
+    assert rec["state"] == "enqueue_failed" and rec["error"] == "ValueError: boom: disk full"
+    monkeypatch.setattr(nersc.nersc_templates, "render_inner", orig)
+    rec2 = _run(njobs=1)
+    assert rec2["run_id"] == "T.e470313" and rec2["state"] == "submitted"
+
+
+def test_submit_run_refuses_when_remote_layout_is_missing(fake):
+    """submit_run must probe the remote layout before the first submit: a
+    run dir missing inner.sh (e.g. a leftover from an old enqueue_failed
+    retry, or manual CFS surgery) would otherwise submit Slurm jobs whose
+    job.sh has nothing to run."""
+    _run(njobs=1, submit=False)
+    rd = f"{BASE}/runs/T.e470313"
+    del fake.files[f"{rd}/inner.sh"]
+    n_submits_before = sum(1 for c in fake.calls if c[0] == "POST" and c[1].endswith(f"/compute/job/{COMPUTE}"))
+    with pytest.raises(BeamkitError, match=f"{rd} is missing inner.sh"):
+        tools.submit_run("T.e470313", "self")
+    n_submits_after = sum(1 for c in fake.calls if c[0] == "POST" and c[1].endswith(f"/compute/job/{COMPUTE}"))
+    assert n_submits_after == n_submits_before
+
+
+def test_submit_run_slices_by_record_slice_size_not_live_config(fake, nersc_home):
+    """Lowering procs_per_node in nersc.toml between a partial submit and
+    submit_run -- the natural operator move after a slice failed -- must not
+    re-slice the run: an index already covered by a submitted job must not
+    be submitted a second time under the new, smaller slices."""
+    fake.fail_submit_at = 1
+    with pytest.raises(BeamkitError, match="job 1 of 3"):
+        _run(njobs=300)
+    rec = tools.beamline_status("T.e470313")["record"]
+    assert rec["state"] == "partially_submitted" and [j["offset"] for j in rec["nersc"]["jobs"]] == [0]
+    fake.fail_submit_at = None
+    (nersc_home / "nersc.toml").write_text(
+        (nersc_home / "nersc.toml").read_text().replace("procs_per_node = 128", "procs_per_node = 64"))
+    rec = tools.submit_run("T.e470313", "self")
+    offsets_counts = [(j["offset"], j["count"]) for j in rec["nersc"]["jobs"]]
+    assert offsets_counts == [(0, 128), (128, 128), (256, 44)]
+    covered = [i for o, c in offsets_counts for i in range(o, o + c)]
+    assert len(covered) == len(set(covered)) == 300
