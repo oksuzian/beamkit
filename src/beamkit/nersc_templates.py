@@ -23,18 +23,23 @@ class TemplateError(BeamkitError):
     pass
 
 
-def g4bl_command(main_input, first_event, num_events, histo_path, params=None, quote=shlex.quote) -> str:
-    """prodtools' g4bl line. `quote` is shlex.quote for a literal path (the
-    prodtools shape the contract test checks) or str when the template
-    passes shell variables."""
-    extra = "".join(f" {k}={quote(str(v))}" for k, v in sorted((params or {}).items()))
-    return (f"g4bl {quote(main_input)} viewer=none First_Event={first_event} Num_Events={num_events} "
-            f"histoFile={quote(histo_path)}" + extra)
+def g4bl_command(main_input, first_event, num_events, histo_arg, params=None) -> str:
+    """prodtools' g4bl line. `main_input` and every `params` value are
+    always shlex.quote'd, matching utils.runmu2e._g4bl_script exactly:
+    those are arbitrary caller strings and must survive whitespace and
+    shell metacharacters unchanged on the node. `first_event` and
+    `histo_arg` arrive pre-rendered by the caller, which is either a
+    literal (quoted by the caller, e.g. g4bl_script) or a bash variable
+    reference that must not be quoted away (render_inner)."""
+    extra = "".join(f" {k}={shlex.quote(str(v))}" for k, v in sorted((params or {}).items()))
+    return (f"g4bl {shlex.quote(main_input)} viewer=none First_Event={first_event} Num_Events={num_events} "
+            f"histoFile={histo_arg}" + extra)
 
 
 def g4bl_script(main_input, first_event, num_events, histo_path, params=None) -> str:
     """Byte-equal to prodtools utils.runmu2e._g4bl_script for the same arguments."""
-    return "\n".join((*G4BL_RECIPE, "cd work", g4bl_command(main_input, first_event, num_events, histo_path, params)))
+    return "\n".join((*G4BL_RECIPE, "cd work",
+                      g4bl_command(main_input, first_event, num_events, shlex.quote(histo_path), params)))
 
 
 def render(name, subs: dict) -> str:
@@ -60,7 +65,7 @@ def render_inner(cfg, *, run_id, run_dir, owner, tag, dsconf, events_per_job, ma
         "RUN_ID": run_id, "RUN_DIR": run_dir, "OWNER": owner, "TAG": tag, "DSCONF": dsconf,
         "EVENTS_PER_JOB": int(events_per_job),
         "G4BL_RECIPE": "\n".join(G4BL_RECIPE),
-        "G4BL_COMMAND": g4bl_command(main_input, "$FIRST", int(events_per_job), "$HISTO", params, quote=str),
+        "G4BL_COMMAND": g4bl_command(main_input, "$FIRST", int(events_per_job), '"$HISTO"', params),
     })
 
 
