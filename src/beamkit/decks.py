@@ -96,6 +96,21 @@ def materialize(url: str, ref: str, cache_dir: Path) -> DeckPin:
     return DeckPin(url, ref, sha, str(dest), True)
 
 
+def pin(deck_ref, deck_dir, deck_url, cache_dir, production) -> DeckPin:
+    """Exactly one of deck_ref (materialized into cache_dir) or deck_dir (a
+    local git checkout, development only)."""
+    if (deck_ref is None) == (deck_dir is None):
+        raise DeckError("pass exactly one of deck_ref (a commit sha or tag) or deck_dir (a local checkout)")
+    if deck_dir is None:
+        return materialize(deck_url, deck_ref, cache_dir)
+    if production:
+        raise DeckError("deck_dir is a development option: run_as='self' only")
+    p = inspect_local(deck_dir)
+    if p.sha is None:
+        raise DeckError(f"deck_dir {deck_dir} is not a git checkout; the dsconf is derived from the commit")
+    return p
+
+
 def inspect_local(dir) -> DeckPin:
     """A development deck: recorded as it is, dirty or not, never refused."""
     d = Path(dir)

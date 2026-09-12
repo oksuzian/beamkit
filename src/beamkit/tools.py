@@ -6,8 +6,9 @@ import json
 import sys
 from typing import Optional
 
-from beamkit import (BeamkitError, __version__, beamfile, bridge, compose, decks, identity, naming, paths,
-                     publishing, records)
+from beamkit import (BeamkitError, __version__, backends, beamfile, bridge, compose, decks, identity, naming,
+                     paths, publishing, records)
+from beamkit.backends import nersc as nersc_backend
 from beamkit.decks import DEFAULT_DECK_URL
 
 SLICE_MAX = 10000
@@ -38,16 +39,7 @@ def _summary(output, n=5):
 
 
 def _pin(deck_ref, deck_dir, deck_url, ident):
-    if (deck_ref is None) == (deck_dir is None):
-        raise BeamkitError("pass exactly one of deck_ref (a commit sha or tag) or deck_dir (a local checkout)")
-    if deck_dir is None:
-        return decks.materialize(deck_url, deck_ref, paths.decks_dir())
-    if ident.production:
-        raise BeamkitError("deck_dir is a development option: run_as='self' only")
-    pin = decks.inspect_local(deck_dir)
-    if pin.sha is None:
-        raise BeamkitError(f"deck_dir {deck_dir} is not a git checkout; the dsconf is derived from the commit")
-    return pin
+    return decks.pin(deck_ref, deck_dir, deck_url, paths.decks_dir(), ident.production)
 
 
 def _is_retryable_run_dir(run_id, runs_dir) -> bool:
@@ -105,11 +97,27 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
                  events_per_job: int = 1000, njobs: int = 1, main_input: str = "Mu2E.in",
                  outloc: str = "scratch", dsconf: Optional[str] = None, slice_size: Optional[int] = None,
                  submit: bool = True, confirm: bool = False, deck_dir: Optional[str] = None,
-                 deck_url: str = DEFAULT_DECK_URL) -> dict:
-    """Pin the deck, allocate desc=tag and dsconf=<sha7>, register the cnf
-    and create its campaign through prodtools, then submit it in one tick.
-    Every caller value is refused before the deck fetch and the SAM probe,
-    so a refused call burns no dsconf and writes no record."""
+                 deck_url: str = DEFAULT_DECK_URL, site: str = "fermilab",
+                 walltime_s: int = nersc_backend.WALLTIME_DEFAULT) -> dict:
+    """Pin the deck, allocate desc=tag and dsconf=<sha7>, then either
+    register the cnf and create its campaign through prodtools and submit
+    it in one tick (site='fermilab'), or build the cnf locally, lay the run
+    out on CFS and submit one Slurm job per procs_per_node indices through
+    the IRI API (site='nersc'). Every caller value is refused before the
+    deck fetch and the remote probe, so a refused call burns no dsconf and
+    writes no record."""
+    backends.validate_site(site)
+    if site == "nersc":
+        if slice_size is not None:
+            raise BeamkitError("slice_size applies to site='fermilab' only; a NERSC run is sliced by "
+                               "procs_per_node from nersc.toml")
+        return nersc_backend.run_beamline(tag=tag, run_as=run_as, deck_ref=deck_ref, params=params,
+                                          events_per_job=events_per_job, njobs=njobs, main_input=main_input,
+                                          outloc=outloc, dsconf=dsconf, submit=submit, deck_dir=deck_dir,
+                                          deck_url=deck_url, walltime_s=walltime_s)
+    if walltime_s != nersc_backend.WALLTIME_DEFAULT:
+        raise BeamkitError("walltime_s applies to site='nersc' only; the Fermilab path takes its resources "
+                           "from prodtools")
     ident = identity.resolve(run_as, confirm)
     dev_dir = ident.dev_dir_for_shipping()
     naming.validate_tag(tag)
@@ -213,6 +221,13 @@ def make_recoveries(run_id: str, run_as: str, confirm: bool = False) -> dict:
                      f"campaign {rec.campaign_id} is {camp['state']!r}, so this was the bare tick: the "
                      f"verify/recovery pass reached its rows and the top-up fed every active campaign in "
                      f"this ledger")}
+
+
+def submit_run(run_id: str, run_as: str) -> dict:
+    """NERSC runs only: submit the Slurm jobs of a run created with
+    submit=False, or the jobs a partial submit did not reach. The Fermilab
+    path submits through make_recoveries."""
+    return nersc_backend.submit_run(run_id, run_as)
 
 
 def beamline_status(run_id: str) -> dict:

@@ -461,3 +461,9 @@ def test_make_recoveries_refuses_the_other_identity(fake_bridge):
     with pytest.raises(BeamkitError, match="run_as='self'"):
         tools.make_recoveries("T.e470313", "mu2epro", confirm=True)
     assert len(fake_bridge["tick"]) == 1
+
+
+def test_fermilab_site_refuses_a_walltime(fake_bridge):
+    with pytest.raises(BeamkitError, match="walltime_s applies to site='nersc' only"):
+        _run(walltime_s=3600)
+    assert fake_bridge["push_cnf"] == []
