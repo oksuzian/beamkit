@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beamkit"
-version = "0.1.0"
+version = "0.3.0"
 description = "G4beamline production front end over the Mu2e prodtools g4bl runner, with an MCP server"
 requires-python = ">=3.10"
 dependencies = ["mcp>=1.2,<2", "requests", "authlib", "tomli; python_version < '3.11'"]
