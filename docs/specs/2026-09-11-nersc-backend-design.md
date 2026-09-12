@@ -399,3 +399,19 @@ None blocking. Two defaults to confirm during implementation:
 2. The beam-file job's ana 2.8.0 python path is the one beamkit already
    uses at Fermilab; confirm uproot imports inside the container on
    Perlmutter in the live test before relying on it.
+
+**Confirmed 2026-09-12.** Live smoke `tests/test_nersc_live.py` passed
+from mu2esrv01 against api.iri.nersc.gov in 10 min 12 s wall: run
+`G4blLive.e470313-001` (the unsuffixed id was taken by an earlier
+attempt's leftover directory), deck e470313, 2 indices of 10 events,
+debug qos. Slurm job 58227570 (2 processes, one node): submitted
+23:40:06 PT, started 23:43:13, ended 23:44:35, elapsed 1 min 22 s on
+nid004326; both nts files (85 KB, 81 KB) and both index logs landed in
+`out/`. Beam-file job 58227941: submitted 23:45:39, started 23:48:09,
+elapsed 55 s on nid005525; `bm` beam file 14 rows from 94 read, 2
+files, pot 20, no missing indices, sidecar copied into the record;
+uproot imported fine under the cvmfs ana 2.8.0 python inside the
+container (open question 2 closed). Three facts corrected along the
+way, all recorded above: whoami returns the numeric account id, the
+API's mkdir needs an existing parent, and the Idempotency-Key header is
+refused with 501.
