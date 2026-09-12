@@ -75,6 +75,26 @@ prodtools is imported only inside the fermilab backend module, so a host
 without prodtools can run every NERSC tool. `get_server_info` reports
 which backends are available and why one is not.
 
+The MCP server is the existing one (`server.py`, FastMCP over stdio,
+the tools.py functions registered as they are). Today it launches only
+through `scripts/start_mcp.sh`, which requires `BEAMKIT_PRODTOOLS_ROOT`
+and borrows prodtools' venv for the `mcp` package because
+`pyproject.toml` declares no dependencies. For the laptop:
+
+- `pyproject.toml` gains `dependencies = ["mcp", "requests", "authlib",
+  "tomli; python_version < '3.11'"]`.
+- A console script `beamkit-mcp = beamkit.server:main`.
+- Registration on the laptop, in Claude Code's `.mcp.json` or Claude
+  Desktop's config:
+
+  ```json
+  {"mcpServers": {"beamkit": {"command": "beamkit-mcp",
+                               "env": {"BEAMKIT_HOME": "/Users/you/.beamkit"}}}}
+  ```
+
+`start_mcp.sh` stays as the Fermilab launcher, where the fermilab
+backend needs prodtools' venv on the path.
+
 ### 4.2 Home directory
 
 `paths.home()` resolves in this order and records the answer in every
