@@ -5,7 +5,7 @@ import pytest
 
 from beamkit import BeamkitError, decks, iri, tools
 from beamkit.backends import nersc
-from tests.fake_iri import FakeSession
+from tests.fake_iri import FakeResponse, FakeSession
 
 SHA = "e470313" + "0" * 33
 BASE = "/global/cfs/cdirs/m4599/Users/u/beamkit"
@@ -146,3 +146,30 @@ def test_local_run_dir_from_a_submitted_run_is_never_reused(fake):
     fake.dirs.discard(f"{BASE}/runs/T.e470313")      # remote gone, local record remains
     with pytest.raises(BeamkitError, match="already exists; a run id is never reused"):
         _run(njobs=1)
+
+
+def test_upload_failure_after_mkdir_retries_the_same_run_id_no_new_dsconf(fake):
+    """A transient failure on an upload happens after the remote run dir is
+    already created by client.mkdir. The retry must not treat that leftover
+    directory as a collision and burn a new dsconf (T.e470313 -> -001)."""
+    rd = f"{BASE}/runs/T.e470313"
+    orig_request = fake.request
+    uploads = {"n": 0}
+    def flaky(method, url, **kw):
+        if "/filesystem/upload/" in url:
+            uploads["n"] += 1
+            if uploads["n"] == 2:
+                return FakeResponse(500, {"type": "about:blank", "status": 500,
+                                          "title": "Internal Server Error",
+                                          "detail": "Error uploading: connection reset"})
+        return orig_request(method, url, **kw)
+    fake.request = flaky
+
+    with pytest.raises(BeamkitError):
+        _run(njobs=1)
+    rec = tools.beamline_status("T.e470313")["record"]
+    assert rec["state"] == "enqueue_failed" and rec["nersc"]["jobs"] == []
+    assert rd in fake.dirs
+
+    rec2 = _run(njobs=1)
+    assert rec2["run_id"] == "T.e470313" and rec2["state"] == "submitted"

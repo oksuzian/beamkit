@@ -76,7 +76,8 @@ def _retryable(run_id, runs_dir) -> bool:
 
 def _remote_layout(client, rd, uploads):
     for d in (rd, f"{rd}/out", f"{rd}/slurm", f"{rd}/beamfiles"):
-        client.mkdir(d)
+        if not client.exists(d):
+            client.mkdir(d)
     for local, remote in uploads:
         client.upload(local, remote)
 
@@ -121,10 +122,19 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
     if not (Path(pin.dir) / main_input).is_file():
         raise BeamkitError(f"main_input {main_input!r} not found in deck dir {pin.dir}")
     client = make_client(cfg)
-    dsconf = naming.allocate_dsconf(ident.owner, tag, naming.dsconf_base(pin.sha), _taken(cfg, client, tag),
-                                    explicit=dsconf)
-    run_id = naming.run_id(tag, dsconf)
     runs_dir = paths.runs_dir()
+    # A retry after a failure that already created the remote run dir (e.g. a
+    # transient upload error) must reuse that dsconf outright: probing the
+    # remote for collision would see our own leftover directory as taken and
+    # silently burn a new dsconf, orphaning the enqueue_failed record.
+    base_dsconf = dsconf if dsconf is not None else naming.dsconf_base(pin.sha)
+    candidate_run_id = naming.run_id(tag, base_dsconf)
+    if _retryable(candidate_run_id, runs_dir):
+        dsconf = base_dsconf
+    else:
+        dsconf = naming.allocate_dsconf(ident.owner, tag, naming.dsconf_base(pin.sha), _taken(cfg, client, tag),
+                                        explicit=dsconf)
+    run_id = naming.run_id(tag, dsconf)
     rdir = records.run_dir(runs_dir, run_id)
     if rdir.exists() and not _retryable(run_id, runs_dir):
         raise BeamkitError(f"run dir {rdir} already exists; a run id is never reused")
