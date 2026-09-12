@@ -53,10 +53,30 @@ def test_job_spec_shape(cfg):
         "inherit_environment": False,
         "environment": {"BK_OFFSET": "128"},
         "resources": {"node_count": 1, "process_count": 44, "processes_per_node": 44,
-                      "cpu_cores_per_process": 1, "exclusive_node_use": True},
-        "attributes": {"duration": 2900, "queue_name": "debug", "account": "m4599",
+                      "cpu_cores_per_process": 1, "exclusive_node_use": False},
+        "attributes": {"duration": 2900, "queue_name": "shared", "account": "m4599",
                        "custom_attributes": {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}},
     }
+
+
+@pytest.mark.parametrize("count,exclusive,queue", [
+    (128, True, "debug"),    # full slice: whole node, configured qos
+    (65, True, "debug"),     # partial but over the shared cap: whole node
+    (64, False, "shared"),   # at the cap: shared, per-core charge
+    (2, False, "shared"),
+    (1, False, "shared"),    # the beam-file job
+])
+def test_job_spec_partial_slice_goes_shared(cfg, count, exclusive, queue):
+    spec = nersc.job_spec(cfg, run_id="T.e470313", run_dir=RUN_DIR, offset=0, count=count, duration=1000)
+    assert spec["resources"]["exclusive_node_use"] is exclusive
+    assert spec["attributes"]["queue_name"] == queue
+
+
+def test_job_spec_honours_shared_config(cfg):
+    from dataclasses import replace
+    c = replace(cfg, shared_qos="debug", shared_max_procs=8)
+    assert nersc.job_spec(c, run_id="T.e470313", run_dir=RUN_DIR, offset=0, count=8, duration=1)["attributes"]["queue_name"] == "debug"
+    assert nersc.job_spec(c, run_id="T.e470313", run_dir=RUN_DIR, offset=0, count=9, duration=1)["resources"]["exclusive_node_use"] is True
 
 
 def test_validate_site():

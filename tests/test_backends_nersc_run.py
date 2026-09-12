@@ -68,6 +68,8 @@ def test_happy_path_layout_record_and_jobs(fake, nersc_home):
     spec = fake.jobs["58197743"]["spec"]
     assert spec["environment"] == {"BK_OFFSET": "128"} and spec["resources"]["process_count"] == 128
     assert spec["attributes"]["duration"] == 920 and spec["attributes"]["queue_name"] == "debug"
+    last = fake.jobs["58197744"]["spec"]        # 44 indices: shared queue, not a whole node
+    assert last["attributes"]["queue_name"] == "shared" and last["resources"]["exclusive_node_use"] is False
     # the local copy of the cnf is kept next to the record
     local = nersc_home / "runs" / "T.e470313" / "cnf.u.T.e470313.0.tar"
     with tarfile.open(local) as t:

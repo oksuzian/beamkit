@@ -11,6 +11,8 @@ from beamkit import BeamkitError, naming
 REQUIRED = ("api", "sfapi_dir", "account", "base_dir", "qos", "owner")
 DEFAULTS = {
     "procs_per_node": 128,
+    "shared_qos": "shared",
+    "shared_max_procs": 64,
     "image": "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest",
     "apptainer": "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer",
 }
@@ -32,6 +34,11 @@ class NerscConfig:
     procs_per_node: int
     image: str
     apptainer: str
+    # A slice smaller than a node goes to shared_qos, non-exclusive, charged
+    # per core, when it fits the shared queue's cap (half a node on
+    # Perlmutter). Larger partial slices and full slices take a whole node.
+    shared_qos: str = "shared"
+    shared_max_procs: int = 64
 
     def key_file(self) -> Path:
         """The private key of the sfapi client, refused when readable by
@@ -56,6 +63,13 @@ class NerscConfig:
         d = asdict(self)
         d["sfapi_dir"] = str(self.sfapi_dir)
         return d
+
+
+def _posint(raw, key, path) -> int:
+    v = raw.get(key, DEFAULTS[key])
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        raise ConfigError(f"{path}: {key} must be a positive integer, got {v!r}")
+    return v
 
 
 def config_path(home) -> Path:
@@ -127,13 +141,14 @@ def load(home) -> NerscConfig:
     missing = [k for k in REQUIRED if k not in raw]
     if missing:
         raise ConfigError(f"{path}: missing {', '.join(missing)}; required keys are {', '.join(REQUIRED)}")
-    ppn = raw.get("procs_per_node", DEFAULTS["procs_per_node"])
-    if isinstance(ppn, bool) or not isinstance(ppn, int) or ppn < 1:
-        raise ConfigError(f"{path}: procs_per_node must be a positive integer, got {ppn!r}")
+    ppn = _posint(raw, "procs_per_node", path)
+    smp = _posint(raw, "shared_max_procs", path)
     return NerscConfig(api=_text(raw, "api").rstrip("/"), sfapi_dir=Path(_text(raw, "sfapi_dir")).expanduser(),
                        account=_text(raw, "account"),
                        base_dir=_validate_base_dir(_text(raw, "base_dir").rstrip("/"), path),
                        qos=_text(raw, "qos"), owner=_validate_owner(_text(raw, "owner"), path),
                        procs_per_node=ppn,
+                       shared_qos=_text(raw, "shared_qos") if "shared_qos" in raw else DEFAULTS["shared_qos"],
+                       shared_max_procs=smp,
                        image=_text(raw, "image") if "image" in raw else DEFAULTS["image"],
                        apptainer=_text(raw, "apptainer") if "apptainer" in raw else DEFAULTS["apptainer"])

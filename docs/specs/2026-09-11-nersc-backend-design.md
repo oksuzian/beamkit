@@ -121,7 +121,9 @@ api            = "https://api.iri.nersc.gov/api/v2"
 sfapi_dir      = "~/.sfapi"      # client_id, and priv_key.pem or priv_key.jwk, mode 400
 account        = "m4599"         # Slurm allocation to charge
 base_dir       = "/global/cfs/cdirs/m4599/Users/oksuzian/beamkit"
-qos            = "regular"       # "debug" for tests
+qos            = "regular"       # "debug" for tests; whole-node slices
+# shared_qos = "shared"          # partial slices (<= shared_max_procs), per-core charge
+# shared_max_procs = 64
 procs_per_node = 128
 image          = "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest"
 apptainer      = "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer"
@@ -179,11 +181,16 @@ before the backend dispatch is shared with the Fermilab path.
    The run record is written locally (state `created`) before the first
    remote write, as today.
 6. Submit `ceil(njobs / procs_per_node)` Slurm jobs, in order. Job k
-   carries `node_count=1`, `exclusive_node_use=true`,
+   carries `node_count=1`,
    `process_count = processes_per_node = min(procs_per_node, njobs - k*procs_per_node)`,
    `cpu_cores_per_process=1`, environment `BK_OFFSET=k*procs_per_node`,
    `executable=/bin/bash`, `arguments=[job.sh]`, stdout and stderr under
-   `slurm/`, `queue_name` from config, `account` from config,
+   `slurm/`, `account` from config. A full slice takes a whole node:
+   `exclusive_node_use=true`, `queue_name=qos`. A slice smaller than a
+   node with at most `shared_max_procs` processes (default 64, half a
+   Perlmutter node, the shared queue's cap) goes to `queue_name=shared_qos`
+   (default `shared`) with `exclusive_node_use=false`, charged per core;
+   a partial slice above the cap takes a whole node like a full one.
    `custom_attributes {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}`,
    and `duration = min(walltime_s, events_per_job * 2 + 900)` seconds where
    `walltime_s` is a new optional tool parameter defaulting to 172800.
@@ -274,8 +281,9 @@ Signature grows by `site: str = "fermilab"`. For a NERSC run:
    `beamfile.sh`, which enters the same container and runs the script
    with `/cvmfs/mu2e.opensciencegrid.org/env/ana/2.8.0/bin/python`.
    Upload both to `beamfiles/`.
-3. Submit one Slurm job, one process, `qos` from config, duration
-   `600 + 2 * n_nts` seconds capped at 4 h.
+3. Submit one Slurm job, one process, which the §5 rule places in
+   `shared_qos` non-exclusive, duration `600 + 2 * n_nts` seconds capped
+   at 4 h.
 4. The job reads `out/nts.*.root`, writes
    `beamfiles/etc.<owner>.<tag>Beam-<label>.<dsconf>.0.txt` and a
    sidecar `beamfiles/etc.<owner>.<tag>Beam-<label>.<dsconf>.0.json`

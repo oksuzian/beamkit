@@ -37,6 +37,7 @@ def test_load_good(beamkit_home, sfapi):
     _write(beamkit_home, GOOD.format(sfapi=sfapi))
     cfg = nc.load(beamkit_home)
     assert cfg.account == "m4599" and cfg.owner == "u" and cfg.procs_per_node == 128
+    assert cfg.shared_qos == "shared" and cfg.shared_max_procs == 64
     assert cfg.image.endswith("fnal-wn-el9:latest") and cfg.apptainer.endswith("/bin/apptainer")
     assert cfg.key_file() == sfapi / "priv_key.pem" and cfg.client_id() == "abcdefghijklm"
     assert cfg.as_record()["sfapi_dir"] == str(sfapi)
@@ -59,6 +60,15 @@ def test_missing_key_is_named(beamkit_home, sfapi):
 def test_unknown_key_is_refused(beamkit_home, sfapi):
     _write(beamkit_home, GOOD.format(sfapi=sfapi) + 'queue = "debug"\n')
     with pytest.raises(nc.ConfigError, match="unknown key 'queue'"):
+        nc.load(beamkit_home)
+
+
+def test_shared_keys_are_read_and_validated(beamkit_home, sfapi):
+    _write(beamkit_home, GOOD.format(sfapi=sfapi) + 'shared_qos = "debug"\nshared_max_procs = 8\n')
+    cfg = nc.load(beamkit_home)
+    assert cfg.shared_qos == "debug" and cfg.shared_max_procs == 8
+    _write(beamkit_home, GOOD.format(sfapi=sfapi) + "shared_max_procs = 0\n")
+    with pytest.raises(nc.ConfigError, match="shared_max_procs"):
         nc.load(beamkit_home)
 
 

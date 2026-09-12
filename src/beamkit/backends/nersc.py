@@ -30,6 +30,11 @@ def duration_s(events_per_job, walltime_s) -> int:
 
 
 def job_spec(cfg, *, run_id, run_dir, offset, count, duration) -> dict:
+    """One node per slice. A slice smaller than a node that fits the shared
+    queue's cap runs there non-exclusive and is charged per core; a full
+    slice, or a partial one over the cap, takes a whole node in cfg.qos
+    (the charge is the same either way for a full node)."""
+    shared = count < cfg.procs_per_node and count <= cfg.shared_max_procs
     return {
         "name": f"beamkit.{run_id}.{offset}",
         "executable": "/bin/bash",
@@ -40,8 +45,9 @@ def job_spec(cfg, *, run_id, run_dir, offset, count, duration) -> dict:
         "inherit_environment": False,
         "environment": {"BK_OFFSET": str(offset)},
         "resources": {"node_count": 1, "process_count": count, "processes_per_node": count,
-                      "cpu_cores_per_process": 1, "exclusive_node_use": True},
-        "attributes": {"duration": int(duration), "queue_name": cfg.qos, "account": cfg.account,
+                      "cpu_cores_per_process": 1, "exclusive_node_use": not shared},
+        "attributes": {"duration": int(duration), "queue_name": cfg.shared_qos if shared else cfg.qos,
+                       "account": cfg.account,
                        "custom_attributes": dict(CUSTOM_ATTRIBUTES)},
     }
 
