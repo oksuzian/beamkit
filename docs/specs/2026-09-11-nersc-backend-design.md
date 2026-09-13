@@ -462,7 +462,8 @@ changes. Differences the transport hides:
   and `machine` (default `perlmutter`).
 
 Confirmed 2026-09-13: run G4blSfapi.e470313 (Slurm 58267921, the bare-exec
-version, one index ran) and G4blSfapi.e470313-001 (Slurm 58268029, srun)
-laid out, submitted and tracked through v1.2 while the IRI v2 adapter was
-still down.
+version, one index ran) and G4blSfapi.e470313-001 (Slurm 58268029, srun: 2 of 2
+outputs, 1 min 24 s in the shared qos, record `complete`) laid out,
+submitted and tracked through v1.2 while the IRI v2 adapter was still
+down.
 
