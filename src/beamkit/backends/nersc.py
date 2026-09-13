@@ -55,7 +55,14 @@ def job_spec(cfg, *, run_id, run_dir, offset, count, duration) -> dict:
 from beamkit import (__version__, compose, decks, identity, iri, naming, nersc_cnf, nersc_config,
                      nersc_templates, paths, records)
 
-make_client = iri.IriClient
+def make_client(cfg):
+    """The transport named in nersc.toml; both expose the same methods."""
+    if cfg.transport == "sfapi":
+        from beamkit import sfapi
+        return sfapi.SfapiClient(cfg)
+    return iri.IriClient(cfg)
+
+
 SUBMITTABLE = ("created", "partially_submitted")
 TERMINAL = ("completed", "failed", "canceled")
 MISSING_CAP = 50

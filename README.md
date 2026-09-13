@@ -283,7 +283,9 @@ prodtools.
    owner          = "<nersc-login>"
    ```
 
-   Optional: `procs_per_node` (128), `shared_qos` ("shared") and
+   Optional: `transport` ("iri", or "sfapi" for the legacy Superfacility
+   API v1.2 at api.nersc.gov with the same client; `machine` defaults to
+   "perlmutter"), `procs_per_node` (128), `shared_qos` ("shared") and
    `shared_max_procs` (64). A full slice of 128 indices takes a whole
    node in `qos`. A smaller slice, up to `shared_max_procs`, runs in
    `shared_qos` non-exclusive and is charged per core, so a 2-job test

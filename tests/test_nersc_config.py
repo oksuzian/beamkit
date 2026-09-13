@@ -160,3 +160,14 @@ def test_toml_import_guard_is_symmetric_on_py311(monkeypatch):
     monkeypatch.setitem(sys.modules, "tomllib", None)
     with pytest.raises(nc.ConfigError, match="tomli"):
         nc._toml()
+
+
+def test_transport_keys(beamkit_home, sfapi):
+    _write(beamkit_home, GOOD.format(sfapi=sfapi))
+    cfg = nc.load(beamkit_home)
+    assert (cfg.transport, cfg.sfapi_api, cfg.machine) == ("iri", "https://api.nersc.gov/api/v1.2", "perlmutter")
+    _write(beamkit_home, GOOD.format(sfapi=sfapi) + 'transport = "sfapi"\nmachine = "perlmutter"\n')
+    assert nc.load(beamkit_home).transport == "sfapi"
+    _write(beamkit_home, GOOD.format(sfapi=sfapi) + 'transport = "ssh"\n')
+    with pytest.raises(nc.ConfigError, match="transport"):
+        nc.load(beamkit_home)

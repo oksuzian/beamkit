@@ -428,3 +428,38 @@ container (open question 2 closed). Three facts corrected along the
 way, all recorded above: whoami returns the numeric account id, the
 API's mkdir needs an existing parent, and the Idempotency-Key header is
 refused with 501.
+
+## 15. Second transport: Superfacility API v1.2 (added 2026-09-13)
+
+On 2026-09-12 the IRI v2 adapter at NERSC returned 500 on every
+compute/filesystem endpoint for more than fifteen hours while the legacy
+Superfacility API (api.nersc.gov/api/v1.2) kept working with the same
+client credential. `transport = "sfapi"` in `nersc.toml` selects
+`beamkit.sfapi.SfapiClient`, which implements the same seven methods the
+backend calls (`mkdir`, `ls`, `exists`, `upload`, `download`, `submit`,
+`status`) with the same return shapes, so nothing above `make_client`
+changes. Differences the transport hides:
+
+- v1.2 reports most failures as HTTP 200 with `status: "ERROR"` and an
+  error string; the client raises `IriError` on those.
+- utilities paths keep their leading slash after the machine segment
+  (`/utilities/upload/perlmutter//global/cfs/...`); a single slash is
+  resolved relative to the service and answers "No such file".
+- `mkdir` runs `utilities/command mkdir -p <path>` (v1.2 has no mkdir
+  endpoint); it is the only shell command the transport runs.
+- `submit` renders the PSI/J spec into an sbatch script (`-J -A -q -N -n
+  --ntasks-per-node -c -t -o -e`, `--exclusive` when the spec says so,
+  `-C` from `constraint`, `--export=NONE`, `cd`, `export BK_OFFSET`,
+  `exec`). `licenses` and `module` are not rendered: Perlmutter's sbatch
+  rejects `-L cvmfs` and cvmfs is mounted on every node.
+- `status` reads `sacct` through `compute/jobs/{machine}?sacct=true&cached=false&kwargs=jobid=N`
+  (the cached view only covers today) and maps Slurm states onto the IRI
+  vocabulary (queued/active/completed/failed/canceled); a job not yet in
+  sacct is `queued`.
+- Optional keys `sfapi_api` (default `https://api.nersc.gov/api/v1.2`)
+  and `machine` (default `perlmutter`).
+
+Confirmed 2026-09-13: run G4blSfapi.e470313 (2 indices x 10 events) laid
+out, submitted (Slurm 58267921) and tracked through v1.2 while the IRI
+v2 adapter was still down.
+

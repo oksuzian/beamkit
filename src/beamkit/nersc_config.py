@@ -13,10 +13,14 @@ DEFAULTS = {
     "procs_per_node": 128,
     "shared_qos": "shared",
     "shared_max_procs": 64,
+    "transport": "iri",
+    "sfapi_api": "https://api.nersc.gov/api/v1.2",
+    "machine": "perlmutter",
     "image": "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest",
     "apptainer": "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer",
 }
 KEY_NAMES = ("priv_key.pem", "priv_key.jwk")
+TRANSPORTS = ("iri", "sfapi")
 
 
 class ConfigError(BeamkitError):
@@ -39,6 +43,11 @@ class NerscConfig:
     # Perlmutter). Larger partial slices and full slices take a whole node.
     shared_qos: str = "shared"
     shared_max_procs: int = 64
+    # "iri": api (IRI Facility API v2). "sfapi": the legacy Superfacility
+    # API v1.2 at sfapi_api, machine-addressed, same client credential.
+    transport: str = "iri"
+    sfapi_api: str = "https://api.nersc.gov/api/v1.2"
+    machine: str = "perlmutter"
 
     def key_file(self) -> Path:
         """The private key of the sfapi client, refused when readable by
@@ -142,6 +151,9 @@ def load(home) -> NerscConfig:
     if missing:
         raise ConfigError(f"{path}: missing {', '.join(missing)}; required keys are {', '.join(REQUIRED)}")
     ppn = _posint(raw, "procs_per_node", path)
+    transport = _text(raw, "transport") if "transport" in raw else DEFAULTS["transport"]
+    if transport not in TRANSPORTS:
+        raise ConfigError(f"{path}: transport must be one of {', '.join(TRANSPORTS)}, got {transport!r}")
     smp = _posint(raw, "shared_max_procs", path)
     return NerscConfig(api=_text(raw, "api").rstrip("/"), sfapi_dir=Path(_text(raw, "sfapi_dir")).expanduser(),
                        account=_text(raw, "account"),
@@ -150,5 +162,8 @@ def load(home) -> NerscConfig:
                        procs_per_node=ppn,
                        shared_qos=_text(raw, "shared_qos") if "shared_qos" in raw else DEFAULTS["shared_qos"],
                        shared_max_procs=smp,
+                       transport=transport,
+                       sfapi_api=(_text(raw, "sfapi_api") if "sfapi_api" in raw else DEFAULTS["sfapi_api"]).rstrip("/"),
+                       machine=_text(raw, "machine") if "machine" in raw else DEFAULTS["machine"],
                        image=_text(raw, "image") if "image" in raw else DEFAULTS["image"],
                        apptainer=_text(raw, "apptainer") if "apptainer" in raw else DEFAULTS["apptainer"])
