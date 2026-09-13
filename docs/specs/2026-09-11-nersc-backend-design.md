@@ -467,3 +467,20 @@ outputs, 1 min 24 s in the shared qos, record `complete`) laid out,
 submitted and tracked through v1.2 while the IRI v2 adapter was still
 down.
 
+## 16. fetch_outputs (added 2026-09-13)
+
+`fetch_outputs(run_id, dest, kind="nts")` is the first retrieval tool
+for NERSC runs. It lists the run's nts files (`kind="nts"`) or the
+complete beam files (`kind="beamfiles"`) on CFS, refuses the whole run
+before any transfer if a file exceeds `iri.DOWNLOAD_MAX` (5 242 880
+bytes, the cap both APIs document), then downloads each file through
+the transport's `download_bytes`, checks the byte count against the
+CFS size, and renames it from `.<name>.part` into `dest`. A file already
+in `dest` with the CFS size is reported `present` and not fetched.
+
+`download_bytes` is `utilities/download?binary=true` (base64) on the
+`sfapi` transport; the `iri` transport raises, because v2's download
+has no binary flag and its handling of a non-text file was not
+verifiable while the adapter was down. Fermilab runs are refused: their
+outputs are in dCache already. Large-file retrieval (Globus) and
+harvest to SAM remain v2.

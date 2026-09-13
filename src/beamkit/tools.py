@@ -263,6 +263,18 @@ def beamline_outputs(run_id: str) -> dict:
             "n_files": len(files), "total_size": sum(f["size"] for f in files), "files": files}
 
 
+def fetch_outputs(run_id: str, dest: str, kind: str = "nts") -> dict:
+    """Copy a NERSC run's nts files (kind="nts") or complete beam files
+    (kind="beamfiles") from CFS into the local directory dest, through the
+    API, at most 5 MB per file; a run with a larger file is refused whole.
+    Files already in dest with the right size are not fetched again. A
+    Fermilab run's outputs are in dCache already."""
+    rec = records.load(run_id, paths.runs_dir())
+    if rec.site != "nersc":
+        raise BeamkitError(f"run {run_id} is a {rec.site!r} run; its outputs are in dCache, see beamline_outputs")
+    return nersc_backend.fetch_outputs(rec, dest, kind)
+
+
 def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", cuts: Optional[dict] = None,
                   publish: bool = False, location: Optional[str] = None, confirm: bool = False,
                   label: Optional[str] = None, site: str = "fermilab") -> dict:

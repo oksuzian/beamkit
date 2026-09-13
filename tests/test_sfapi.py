@@ -95,6 +95,40 @@ def test_upload_download_round_trip_and_cap(client, tmp_path, monkeypatch):
         client.download(RUN_DIR + "/missing")
 
 
+def test_download_bytes_is_binary_safe(client):
+    client.fake.dirs |= {RUN_DIR, RUN_DIR + "/out"}
+    blob = bytes(range(256)) * 3
+    client.fake.files[RUN_DIR + "/out/x.root"] = blob
+    assert client.download_bytes(RUN_DIR + "/out/x.root") == blob
+    call = [c for c in client.fake.calls if c[1].endswith("/out/x.root")][-1]
+    assert call[2]["params"] == {"binary": "true"}
+    with pytest.raises(iri.IriError, match="No such file"):
+        client.download_bytes(RUN_DIR + "/out/missing.root")
+
+
+def test_download_bytes_refuses_bad_base64(client, monkeypatch):
+    class Bad(FakeSfapiSession):
+        def request(self, method, url, **kw):
+            r = super().request(method, url, **kw)
+            if "/download/" in url:
+                r._json["file"] = "not*base64"
+            return r
+    bad = Bad()
+    bad.dirs |= {RUN_DIR}
+    bad.files[RUN_DIR + "/x"] = b"x"
+    c = sfapi.SfapiClient(client.cfg, token_provider=lambda: "tok", session=bad)
+    with pytest.raises(iri.IriError, match="not base64"):
+        c.download_bytes(RUN_DIR + "/x")
+
+
+def test_iri_transport_refuses_binary_download(cfg, tmp_path):
+    from dataclasses import replace
+    from tests.fake_iri import FakeSession
+    c = iri.IriClient(replace(cfg, transport="iri"), token_provider=lambda: "tok", session=FakeSession())
+    with pytest.raises(iri.IriError, match="unverified"):
+        c.download_bytes("/x.root")
+
+
 def test_submit_and_status_round_trip(client, cfg):
     spec = nersc.job_spec(cfg, run_id="T.e470313", run_dir=RUN_DIR, offset=0, count=2, duration=60)
     jid = client.submit(spec)

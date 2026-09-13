@@ -93,6 +93,10 @@ class FakeSfapiSession:
             if op == "download":
                 if p not in self.files:
                     return FakeResponse(200, {"status": "ERROR", "file": None, "is_binary": False, "error": "No such file"})
+                if kw.get("params", {}).get("binary") == "true":
+                    import base64
+                    return FakeResponse(200, {"status": "OK", "file": base64.b64encode(self.files[p]).decode(),
+                                              "is_binary": True, "error": None})
                 return FakeResponse(200, {"status": "OK", "file": self.files[p].decode(), "is_binary": False, "error": None})
         if path == f"/compute/jobs/{MACHINE}" and method == "POST":
             k = sum(1 for c in self.calls if c[1] == url and c[0] == "POST") - 1

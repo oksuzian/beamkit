@@ -9,6 +9,7 @@ from pathlib import Path
 from beamkit import BeamkitError
 
 UPLOAD_MAX = 5_242_880
+DOWNLOAD_MAX = 5_242_880   # both APIs: 'Download a small file (max 5242880 Bytes)'
 TOKEN_URL = "https://oidc.nersc.gov/c2id/token"
 _AUTH_HINT = ("the API refused the token. Two usual causes: this host's source IP is not in the "
               "client's allow list (a red client is pinned to at most two IPs), or the client "
@@ -166,6 +167,13 @@ class IriClient:
         res = self.wait_task(self._req("POST", f"/filesystem/download/{self._fs()}", json={"path": remote}))
         out = res.get("output") if isinstance(res, dict) else res
         return out if isinstance(out, str) else json.dumps(out)
+
+    def download_bytes(self, remote) -> bytes:
+        # v2's download has no binary flag and its encoding of a non-text
+        # file is unverified (the adapter was down when this was written):
+        # refuse rather than write a corrupt ROOT file
+        raise IriError(f"download of a binary file over the iri transport is unverified ({remote}); "
+                       "set transport = \"sfapi\" in nersc.toml")
 
     # --- compute
     def _compute(self):

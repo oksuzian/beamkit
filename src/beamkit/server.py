@@ -46,6 +46,10 @@ nersc: beamline_status reports missing indices, a new run replaces a
 short one; submit_run submits a run created with submit=false or the
 jobs a partial submit did not reach. make_beamfile on a nersc run is a
 second Slurm job that builds the beam file next to the nts files.
+fetch_outputs(run_id, dest, kind) copies the nts files or the complete
+beam files from CFS into a local directory through the API, at most
+5 MB per file; a run with a larger file is refused whole and needs
+Globus or scp.
 """
 
 TOOLS = {
@@ -55,6 +59,7 @@ TOOLS = {
     "beamline_status": "Run record merged with campaign status: prodtools (site=\"fermilab\") or Slurm job states and CFS output counts, expected/nts/logs/missing (site=\"nersc\").",
     "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention/partially_submitted/short/complete.",
     "beamline_outputs": "Files of the run's nts dataset with sizes and paths: dCache (site=\"fermilab\") or CFS (site=\"nersc\").",
+    "fetch_outputs": "NERSC runs only: copy the run's nts files (kind=\"nts\") or complete beam files (kind=\"beamfiles\") from CFS into a local directory through the API, at most 5 MB per file; larger files need Globus or scp.",
     "make_beamfile": "Build a BLTrackFile beam file from the run's nts files, through prodtools (site=\"fermilab\") or as a Slurm job on Perlmutter (site=\"nersc\"); preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
     "get_server_info": "beamkit version, backends (fermilab/nersc availability), prodtools root and commit, directories, limits, walltime_default.",
 }

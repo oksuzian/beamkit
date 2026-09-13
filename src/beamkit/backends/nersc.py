@@ -3,6 +3,7 @@ slice of procs_per_node indices, driven through the IRI Facility API.
 Nothing here touches SAM, dCache, prodtools or a ledger."""
 import json
 import math
+import os
 from pathlib import Path
 
 from beamkit import BeamkitError
@@ -290,6 +291,66 @@ def outputs(rec) -> dict:
     files.sort(key=lambda f: f["index"])
     return {"run_id": rec.run_id, "run_dir": rd, "n_files": len(files),
             "total_size": sum(f["size"] for f in files), "files": files, "beamfiles": list(rec.beamfiles)}
+
+
+FETCH_KINDS = ("nts", "beamfiles")
+
+
+def _fetch_list(client, rec, kind) -> list[dict]:
+    if kind == "nts":
+        return outputs(rec)["files"]
+    files = []
+    for bf in rec.beamfiles:
+        if bf.get("state") != "complete":
+            continue
+        entry = client.ls(bf["path"])
+        if len(entry) != 1:
+            raise BeamkitError(f"run {rec.run_id}: beam file {bf['path']} is not one file on CFS ({len(entry)} entries)")
+        files.append({"name": bf["path"].rsplit("/", 1)[-1], "label": bf["label"],
+                      "size": int(entry[0]["size"]), "path": bf["path"]})
+    return files
+
+
+def fetch_outputs(rec, dest, kind) -> dict:
+    """Copy the run's nts files (or its complete beam files) from CFS into
+    dest through the API's download endpoint, one file per call. The API
+    carries at most iri.DOWNLOAD_MAX bytes per file, so a run with one
+    larger file is refused whole before any transfer (Globus or scp is
+    the path for those). A file already in dest with the CFS size is left
+    alone, so a rerun only fetches what is missing. Each file is written
+    to a temporary name and renamed once its size matches CFS."""
+    if kind not in FETCH_KINDS:
+        raise BeamkitError(f"kind must be one of {FETCH_KINDS}, got {kind!r}")
+    cfg = nersc_config.load(paths.home())
+    client = make_client(cfg)
+    files = _fetch_list(client, rec, kind)
+    big = [f for f in files if f["size"] > iri.DOWNLOAD_MAX]
+    if big:
+        names = ", ".join(f"{f['name']} ({f['size']} bytes)" for f in big[:5])
+        raise BeamkitError(f"run {rec.run_id}: {len(big)} of {len(files)} {kind} files exceed the API's "
+                           f"{iri.DOWNLOAD_MAX}-byte download cap ({names}{', ...' if len(big) > 5 else ''}); "
+                           f"nothing fetched: move them with Globus or scp from {rec.nersc['run_dir']}")
+    dest = Path(dest).expanduser().resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    fetched = skipped = 0
+    for f in files:
+        local = dest / f["name"]
+        if local.is_file() and local.stat().st_size == f["size"]:
+            f.update(local=str(local), status="present")
+            skipped += 1
+            continue
+        data = client.download_bytes(f["path"])
+        if len(data) != f["size"]:
+            raise BeamkitError(f"run {rec.run_id}: {f['name']} is {f['size']} bytes on CFS "
+                               f"but {len(data)} bytes came back; nothing written")
+        tmp = dest / f".{f['name']}.part"
+        tmp.write_bytes(data)
+        os.replace(tmp, local)
+        f.update(local=str(local), status="fetched")
+        fetched += 1
+    return {"run_id": rec.run_id, "kind": kind, "dest": str(dest), "n_files": len(files),
+            "n_fetched": fetched, "n_present": skipped, "total_size": sum(f["size"] for f in files),
+            "files": files}
 
 
 from beamkit import beamfile

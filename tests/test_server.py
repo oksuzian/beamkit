@@ -6,7 +6,7 @@ from beamkit import server, tools
 def test_tool_table_covers_every_public_tool():
     assert set(server.TOOL_NAMES) == {"run_beamline", "make_recoveries", "beamline_status",
                                       "list_beamline_runs", "beamline_outputs", "make_beamfile",
-                                      "get_server_info", "submit_run"}
+                                      "get_server_info", "submit_run", "fetch_outputs"}
     for name, description in server.TOOLS.items():
         assert callable(getattr(tools, name)) and description
 

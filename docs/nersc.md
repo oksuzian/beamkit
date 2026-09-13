@@ -41,6 +41,16 @@ Outputs stay on CFS under `base_dir/runs/<run_id>/out/`; the beam file
 under `beamfiles/`. Nothing is declared to SAM. There is no recovery:
 `beamline_status` lists missing indices; a new run replaces a short one.
 
+`fetch_outputs(run_id, dest)` copies the nts files (or, with
+`kind="beamfiles"`, the complete beam files) into a local directory
+through the API's download endpoint, which carries at most 5 MB per
+file on either transport. A run with one larger file is refused whole:
+move those with Globus (the NERSC "Perlmutter" collection) or `scp`
+from a Perlmutter login node. Files already in `dest` with the CFS
+size are not fetched again, so a rerun completes an interrupted copy.
+Binary download is verified on the `sfapi` transport only; the `iri`
+transport refuses it until v2's encoding of a non-text file is checked.
+
 ## The Superfacility API client
 
 beamkit authenticates to NERSC with a Superfacility API client: a client

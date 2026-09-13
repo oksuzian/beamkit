@@ -9,6 +9,7 @@ script rendered here from the PSI/J spec; job state comes from sacct
 (`cached=false`, or a job older than today is invisible); mkdir is the
 one shell command run (`utilities/command mkdir -p`), v1.2 having no
 mkdir endpoint."""
+import base64
 import math
 import shlex
 import time
@@ -202,6 +203,17 @@ class SfapiClient:
         if f is None:
             raise IriError(f"download {remote}: no file in response {r!r}")
         return f
+
+    def download_bytes(self, remote) -> bytes:
+        # binary=true answers the file base64-encoded in "file"
+        r = self._req("GET", self._upath("download", remote), params={"binary": "true"})
+        f = r.get("file")
+        if f is None:
+            raise IriError(f"download {remote}: no file in response {r!r}")
+        try:
+            return base64.b64decode(f, validate=True)
+        except (ValueError, TypeError) as e:
+            raise IriError(f"download {remote}: response is not base64: {e}") from e
 
     # --- compute
     def submit(self, spec) -> str:

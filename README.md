@@ -30,6 +30,7 @@ Then ask in plain words:
 | "Run 100 g4bl jobs of 1000 events from deck tag v3 on NERSC" | `run_beamline(tag="G4blBeam", deck_ref="v3", run_as="self", site="nersc", njobs=100, events_per_job=1000, params={"epsMax": "0.01"})` |
 | "Same on the grid" | the same call without `site` |
 | "How is it doing?" / "Where are the outputs?" | `beamline_status(run_id)`, `beamline_outputs(run_id)` |
+| "Copy the NERSC outputs here" | `fetch_outputs(run_id, dest="/exp/mu2e/data/users/$USER/pull")` (API, 5 MB per file; bigger files go by Globus or scp) |
 | "Build the bm beam file" | `make_beamfile(run_id, "bm", "self", site="nersc")` |
 
 `run_as="self"` is always safe. `params={"epsMax": "0.01"}` is needed
