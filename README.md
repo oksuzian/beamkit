@@ -30,7 +30,7 @@ For NERSC jobs, also do steps 1 and 3 of "NERSC from a laptop" below
 ### On a laptop (NERSC only)
 
 ```bash
-pip install git+https://github.com/oksuzian/beamkit.git@v0.3.0
+pip install git+https://github.com/oksuzian/beamkit.git@v0.3.1
 ```
 
 then steps 1, 3 and 4 of "NERSC from a laptop". Records live in
@@ -118,8 +118,8 @@ Publishing a release, as `cvmfsmu2e@oasiscfs.fnal.gov` (about an hour
 to propagate):
 
 ```bash
-bin/install_beamkit.sh -n -c 25.0 v0.3.0          # dry run: tag exists, path free
-bin/install_beamkit.sh -c 25.0 v0.3.0             # transaction, venv, current ->, publish
+bin/install_beamkit.sh -n -c 25.0 v0.3.1          # dry run: tag exists, path free
+bin/install_beamkit.sh -c 25.0 v0.3.1             # transaction, venv, current ->, publish
 ```
 
 `-c` is the pool's htcondor major.minor (`condor_version` on a gpvm);
@@ -286,7 +286,15 @@ prodtools.
    Optional: `transport` ("iri", or "sfapi" for the legacy Superfacility
    API v1.2 at api.nersc.gov with the same client; `machine` defaults to
    "perlmutter"), `procs_per_node` (128), `shared_qos` ("shared") and
-   `shared_max_procs` (64). A full slice of 128 indices takes a whole
+   `shared_max_procs` (64).
+
+   Both transports do the same job. `iri` is the facility-neutral
+   interface and the default; `sfapi` is the fallback when the IRI v2
+   adapter is down (it was, for more than a day, from 2026-09-12).
+   `scripts/iri-ping [BEAMKIT_HOME]` tells them apart: token, whoami,
+   both resource listings, a CFS `ls`, and the same token against v1.2,
+   with a one-line verdict (client problem, IRI adapter problem, or
+   facility problem). Exit 0 when the IRI API is up, 2 when not. A full slice of 128 indices takes a whole
    node in `qos`. A smaller slice, up to `shared_max_procs`, runs in
    `shared_qos` non-exclusive and is charged per core, so a 2-job test
    or the last partial slice of a run does not bill a whole node. The
