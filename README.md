@@ -64,37 +64,6 @@ prompt, and is refused on NERSC. `tag` is the Mu2e description token
 of the output dataset; `deck_ref` is a git tag or sha of the deck repo.
 Default deck repo: `https://github.com/Mu2e/G4BeamlineScripts`.
 
-## Install
-
-Dev venv:
-
-```bash
-/cvmfs/mu2e.opensciencegrid.org/spackages/241207/spack/var/spack/environments/ops-019/.spack-env/view/bin/python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m pytest --version
-```
-
-Runtime dependencies are `mcp<2` (2.x renamed FastMCP), `requests`,
-`authlib` and, below Python 3.11, `tomli`. `htcondor` is not declared:
-the Fermilab path reads the grid queue through prodtools, whose MCP venv
-(or the cvmfs release venv below) carries the wheel matching the pool.
-
-Running the server needs `BEAMKIT_PRODTOOLS_ROOT` set to a prodtools
-checkout whose `mcp/.venv` is installed (see prodtools'
-`mcp/scripts/install.sh`). The launcher refuses to start without it:
-
-```bash
-BEAMKIT_PRODTOOLS_ROOT=/path/to/prodtools scripts/start_mcp.sh --check
-```
-
-`--check` builds the server, confirms every advertised tool is
-registered, and imports prodtools through `bridge.prodtools_info()` —
-three `OK:` lines on success.
-
-For another checkout, edit the `command` and
-`env.BEAMKIT_PRODTOOLS_ROOT` paths in `.mcp.json` — it is checked in
-with this personal checkout's absolute paths.
-
 ## Install from cvmfs (any host that mounts the Mu2e repo)
 
 One release for every gpvm, no per-user install. A release directory is
@@ -315,6 +284,39 @@ prodtools.
 Outputs stay on CFS under `base_dir/runs/<run_id>/out/`; the beam file
 under `beamfiles/`. Nothing is declared to SAM. There is no recovery:
 `beamline_status` lists missing indices; a new run replaces a short one.
+
+## Developing beamkit
+
+Only for working on the code; users on cvmfs or pip never need this.
+Dev venv on a Mu2e host:
+
+```bash
+/cvmfs/mu2e.opensciencegrid.org/spackages/241207/spack/var/spack/environments/ops-019/.spack-env/view/bin/python3 -m venv .venv
+env -u PYTHONPATH .venv/bin/pip install -e '.[dev]'
+env -u PYTHONPATH .venv/bin/python -m pytest -q
+```
+
+`env -u PYTHONPATH` matters on a host whose shell loads the Mu2e ops
+spack environment: its `PYTHONPATH` shadows the venv and breaks the
+`ana` python that beam-file tests spawn. Runtime dependencies are
+`mcp<2` (2.x renamed FastMCP), `requests`, `authlib` and, below Python
+3.11, `tomli`. `htcondor` is not declared: the Fermilab path reads the
+grid queue through prodtools, whose MCP venv (or the cvmfs release venv)
+carries the wheel matching the pool.
+
+Running the server from a checkout needs `BEAMKIT_PRODTOOLS_ROOT` set to
+a prodtools checkout whose `mcp/.venv` is installed (see prodtools'
+`mcp/scripts/install.sh`). The launcher refuses to start without it:
+
+```bash
+BEAMKIT_PRODTOOLS_ROOT=/path/to/prodtools scripts/start_mcp.sh --check
+```
+
+`--check` builds the server, confirms every advertised tool is
+registered, and imports prodtools through `bridge.prodtools_info()`,
+three `OK:` lines on success. For another checkout, edit the `command`
+and `env.BEAMKIT_PRODTOOLS_ROOT` paths in `.mcp.json`; it is checked in
+with this personal checkout's absolute paths.
 
 ## Not in v1
 
