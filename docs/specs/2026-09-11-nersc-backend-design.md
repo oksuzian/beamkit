@@ -450,7 +450,9 @@ changes. Differences the transport hides:
 - `submit` renders the PSI/J spec into an sbatch script (`-J -A -q -N -n
   --ntasks-per-node -c -t -o -e`, `--exclusive` when the spec says so,
   `-C` from `constraint`, `--export=NONE`, `cd`, `export BK_OFFSET`,
-  `exec`). `licenses` and `module` are not rendered: Perlmutter's sbatch
+  `exec srun --export=ALL <executable> <arguments>`; the srun is what
+  gives each of the process_count tasks its SLURM_PROCID, as the IRI
+  adapter does; a bare exec ran job.sh once and index 1 never started). `licenses` and `module` are not rendered: Perlmutter's sbatch
   rejects `-L cvmfs` and cvmfs is mounted on every node.
 - `status` reads `sacct` through `compute/jobs/{machine}?sacct=true&cached=false&kwargs=jobid=N`
   (the cached view only covers today) and maps Slurm states onto the IRI
@@ -459,7 +461,8 @@ changes. Differences the transport hides:
 - Optional keys `sfapi_api` (default `https://api.nersc.gov/api/v1.2`)
   and `machine` (default `perlmutter`).
 
-Confirmed 2026-09-13: run G4blSfapi.e470313 (2 indices x 10 events) laid
-out, submitted (Slurm 58267921) and tracked through v1.2 while the IRI
-v2 adapter was still down.
+Confirmed 2026-09-13: run G4blSfapi.e470313 (Slurm 58267921, the bare-exec
+version, one index ran) and G4blSfapi.e470313-001 (Slurm 58268029, srun)
+laid out, submitted and tracked through v1.2 while the IRI v2 adapter was
+still down.
 

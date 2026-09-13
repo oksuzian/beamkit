@@ -70,7 +70,10 @@ def render_sbatch(spec) -> str:
     for k, v in (spec.get("environment") or {}).items():
         lines.append(f"export {k}={shlex.quote(str(v))}")
     cmd = " ".join(shlex.quote(a) for a in [spec["executable"], *spec.get("arguments", [])])
-    lines.append(f"exec {cmd}")
+    # one task per process, as the IRI adapter does: srun launches
+    # process_count copies and gives each its SLURM_PROCID; a bare exec
+    # would run the executable once on the batch host
+    lines.append(f"exec srun --export=ALL {cmd}")
     return "\n".join(lines) + "\n"
 
 

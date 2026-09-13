@@ -31,7 +31,7 @@ def test_render_sbatch_from_job_spec(cfg):
                  "#SBATCH --ntasks-per-node=128", "#SBATCH -c 1", "#SBATCH -t 49", "#SBATCH --exclusive",
                  "#SBATCH -C cpu", "#SBATCH --export=NONE",
                  f"#SBATCH -o {RUN_DIR}/slurm/128.out", f"#SBATCH -e {RUN_DIR}/slurm/128.err",
-                 f"cd {RUN_DIR} || exit 2", "export BK_OFFSET=128", f"exec /bin/bash {RUN_DIR}/job.sh"):
+                 f"cd {RUN_DIR} || exit 2", "export BK_OFFSET=128", f"exec srun --export=ALL /bin/bash {RUN_DIR}/job.sh"):
         assert line in script, line
 
 
@@ -194,7 +194,7 @@ def test_backend_end_to_end_on_sfapi(sfapi_fake):
     bspec = fake.jobs[entry["slurm_id"]]["spec"]
     assert bspec["attributes"]["queue_name"] == "shared" and bspec["resources"]["process_count"] == 1
     assert f"{RD}/beamfiles/beamfile.bm.sh" in fake.files and f"{RD}/beamfiles/beamfile_job.bm.py" in fake.files
-    assert bspec["script"].endswith(f"exec /bin/bash {RD}/beamfiles/beamfile.bm.sh\n")
+    assert bspec["script"].endswith(f"exec srun --export=ALL /bin/bash {RD}/beamfiles/beamfile.bm.sh\n")
 
 
 def test_backend_submit_failure_on_sfapi_is_retryable(sfapi_fake):
