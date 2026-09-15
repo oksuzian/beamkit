@@ -1,125 +1,125 @@
-import sys
-import types
+"""bridge.py against the fake prodtools servers spawned from a fake
+BEAMKIT_PRODTOOLS_ROOT (see conftest.fake_prodtools_root). Every test here
+exercises the real MCP client path; only the far end is canned."""
+import json
+import os
+import subprocess
 
 import pytest
 
 from beamkit import bridge
 
 
-@pytest.fixture
-def fake_prodtools(monkeypatch, tmp_path):
-    """Minimal stand-ins for the prodtools modules bridge imports."""
-    calls = {}
-    tools = types.ModuleType("prodtools_mcp_write.tools")
-    def push_cnf(**kw):
-        calls["push_cnf"] = kw
-        # the real push_cnf echoes the entry's outloc key, a glob, not a dataset name
-        return {"tarball": "cnf.u.T.e470313.0.tar", "datasets": ["nts.*.root"], "campaign_id": 7, "njobs": 3}
-    def run_submissions(**kw):
-        calls["run_submissions"] = kw
-        return {"rc": 0, "needs_attention": False, "campaign_id": kw["campaign_id"], "output": "tick ok"}
-    tools.push_cnf = push_cnf
-    tools.run_submissions = run_submissions
-    runner = types.ModuleType("prodtools_mcp_write.runner")
-    runner.REPO_ROOT = str(tmp_path)
-    pkg = types.ModuleType("prodtools_mcp_write")
-    pkg.tools, pkg.runner = tools, runner
-    status = types.ModuleType("prodtools_mcp.tools.status")
-    status.campaign_status = lambda **kw: {"called": kw}
-    status.list_campaigns = lambda **kw: {"count": 1, "db_path": "/db", "called": kw,
-                                          "campaigns": [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]}
-    sw = types.ModuleType("utils.samweb_wrapper")
-    sw.locate_file = lambda name: "enstore:/x" if name.endswith("e470313.0.tar") else ""
-    sw.file_sizes_in_dataset = lambda ds: {"nts.u.T.e470313.00000002.root": 20, "nts.u.T.e470313.00000000.root": 10}
-    fr = types.ModuleType("utils.file_resolver")
-    fr.dataset_dir = lambda ds, loc: f"/pnfs/{loc}/{ds}" if loc in ("scratch", "disk", "tape") else ""
-    jc = types.ModuleType("utils.job_common")
-    class Mu2eName:
-        def __init__(self, s): self.sequencer = s.split(".")[4]; self.filename = s
-        @classmethod
-        def parse(cls, s): return cls(s)
-        def relpathname(self): return f"aa/bb/{self.filename}"
-    jc.Mu2eName = Mu2eName
-    for name, mod in {"prodtools_mcp_write": pkg, "prodtools_mcp_write.tools": tools,
-                      "prodtools_mcp_write.runner": runner,
-                      "prodtools_mcp": types.ModuleType("prodtools_mcp"),
-                      "prodtools_mcp.tools": types.ModuleType("prodtools_mcp.tools"),
-                      "prodtools_mcp.tools.status": status,
-                      "utils": types.ModuleType("utils"), "utils.samweb_wrapper": sw,
-                      "utils.file_resolver": fr, "utils.job_common": jc}.items():
-        monkeypatch.setitem(sys.modules, name, mod)
-    sys.modules["prodtools_mcp.tools"].status = status
-    return calls
+def calls(root):
+    path = root.parent / "calls.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(l) for l in path.read_text().splitlines()]
 
 
-def test_import_without_prodtools_then_call_raises(monkeypatch):
-    for name in list(sys.modules):
-        if name.startswith(("prodtools_mcp", "utils")):
-            monkeypatch.delitem(sys.modules, name)
-    monkeypatch.setattr(sys, "path", [p for p in sys.path if "prodtools" not in p])
+def test_missing_root_is_a_clear_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("BEAMKIT_PRODTOOLS_ROOT", str(tmp_path / "nowhere"))
+    bridge.reset()
+    ok, detail = bridge.availability()
+    assert ok is False and "BEAMKIT_PRODTOOLS_ROOT" in detail and "start_write_mcp.sh" in detail
     with pytest.raises(bridge.BridgeError, match="BEAMKIT_PRODTOOLS_ROOT"):
         bridge.tick("self", 1, False)
 
 
-def test_push_cnf_forwards_as_keywords(fake_prodtools, tmp_path):
+def test_default_root_is_the_cvmfs_release(monkeypatch):
+    monkeypatch.delenv("BEAMKIT_PRODTOOLS_ROOT", raising=False)
+    assert bridge.prodtools_root() == "/cvmfs/mu2e.opensciencegrid.org/bin/prodtools/current"
+    assert str(bridge.launcher("write")).endswith("/mcp/scripts/start_write_mcp.sh")
+    assert str(bridge.launcher("read")).endswith("/mcp/scripts/start_mcp.sh")
+
+
+def test_availability_needs_both_launchers(fake_prodtools_root):
+    assert bridge.availability() == (True, f"prodtools at {fake_prodtools_root}")
+    (fake_prodtools_root / "mcp" / "scripts" / "start_mcp.sh").unlink()
+    ok, detail = bridge.availability()
+    assert ok is False and "start_mcp.sh" in detail
+
+
+def test_push_cnf_forwards_as_keywords(fake_prodtools_root, tmp_path):
     out = bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False)
-    assert out["campaign_id"] == 7
-    assert fake_prodtools["push_cnf"] == {"json": str(tmp_path / "entry.json"), "desc": "T", "dsconf": "e470313",
-                                          "slice_size": 3, "run_as": "self", "confirm": False}
+    assert out["campaign_id"] == 7 and out["tarball"] == "cnf.u.T.e470313.0.tar"
+    assert calls(fake_prodtools_root)[-1] == {
+        "tool": "push_cnf", "args": {"json": str(tmp_path / "entry.json"), "desc": "T", "dsconf": "e470313",
+                                     "slice_size": 3, "run_as": "self", "confirm": False}}
 
 
-def test_push_cnf_forwards_an_explicit_dev_dir(fake_prodtools, tmp_path):
+def test_push_cnf_forwards_an_explicit_dev_dir(fake_prodtools_root, tmp_path):
     bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False,
                     prodtools_dir="/exp/mu2e/app/users/u/prodtools")
-    assert fake_prodtools["push_cnf"]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
+    assert calls(fake_prodtools_root)[-1]["args"]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
 
 
-def test_push_cnf_sends_no_prodtools_dir_keyword_for_the_release(fake_prodtools, tmp_path, monkeypatch):
+def test_push_cnf_sends_no_prodtools_dir_keyword_for_the_release(fake_prodtools_root, tmp_path, monkeypatch):
     """None means the cvmfs release: the keyword is absent, not None, and the
     environment is not consulted here -- identity reads it, once."""
     monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
     bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False)
-    assert "prodtools_dir" not in fake_prodtools["push_cnf"]
+    assert "prodtools_dir" not in calls(fake_prodtools_root)[-1]["args"]
 
 
-def test_tick_forwards(fake_prodtools):
+def test_tick_forwards(fake_prodtools_root):
     out = bridge.tick("mu2epro", 7, True)
     assert out["rc"] == 0
-    assert fake_prodtools["run_submissions"] == {"run_as": "mu2epro", "campaign_id": 7, "confirm": True}
+    assert calls(fake_prodtools_root)[-1] == {"tool": "run_submissions",
+                                              "args": {"run_as": "mu2epro", "campaign_id": 7, "confirm": True}}
 
 
-def test_push_file_missing_in_prodtools_is_clear_error(fake_prodtools, tmp_path):
+def test_write_failure_is_the_servers_own_message(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_FAIL", "run_submissions")
+    bridge.reset()
+    with pytest.raises(bridge.BridgeError) as ei:
+        bridge.tick("self", 7, False)
+    assert str(ei.value) == "run_submissions refused by the fake; remedy: try the other thing"
+
+
+def test_read_error_envelope_becomes_bridge_error(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_FAIL", "campaign_status")
+    bridge.reset()
+    with pytest.raises(bridge.BridgeError, match=r"campaign_status refused by the fake.*\(internal\)"):
+        bridge.campaign_status(7, True)
+
+
+def test_push_file_available_follows_the_listing(fake_prodtools_root, monkeypatch):
+    assert bridge.push_file_available() is True
+    monkeypatch.setenv("FAKE_PRODTOOLS_OMIT", "push_file")
+    bridge.reset()
+    assert bridge.push_file_available() is False
+
+
+def test_push_file_missing_in_prodtools_is_clear_error(fake_prodtools_root, monkeypatch, tmp_path):
+    monkeypatch.setenv("FAKE_PRODTOOLS_OMIT", "push_file")
+    bridge.reset()
     with pytest.raises(bridge.BridgeError, match="publish=False"):
         bridge.push_file(tmp_path / "f.txt", "scratch", ["a.root"], "self", False)
 
 
-def test_push_file_available_is_false_when_prodtools_lacks_it(fake_prodtools):
-    assert bridge.push_file_available() is False
-
-
-def test_push_file_available_is_true_when_prodtools_has_it(fake_prodtools):
-    sys.modules["prodtools_mcp_write.tools"].push_file = lambda **kw: {"name": "ok"}
-    assert bridge.push_file_available() is True
-
-
-def test_push_file_present_forwards(fake_prodtools, tmp_path):
-    seen = {}
-    sys.modules["prodtools_mcp_write.tools"].push_file = lambda **kw: seen.update(kw) or {"name": "ok"}
+def test_push_file_present_forwards(fake_prodtools_root, tmp_path):
     assert bridge.push_file(tmp_path / "f.txt", "tape", ("a.root", "b.root"), "self", False) == {"name": "ok"}
-    assert seen == {"path": str(tmp_path / "f.txt"), "location": "tape", "parents": ["a.root", "b.root"],
-                    "run_as": "self", "confirm": False}
+    assert calls(fake_prodtools_root)[-1]["args"] == {"path": str(tmp_path / "f.txt"), "location": "tape",
+                                                      "parents": ["a.root", "b.root"], "run_as": "self",
+                                                      "confirm": False}
 
 
-def test_campaign_status_forwards(fake_prodtools):
+def test_campaign_status_forwards(fake_prodtools_root):
     assert bridge.campaign_status(7, True) == {"called": {"campaign_id": 7, "mine": True}}
 
 
-def test_cnf_exists(fake_prodtools):
+def test_campaigns_is_the_ledger_only_listing(fake_prodtools_root):
+    assert bridge.campaigns(mine=True) == [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]
+    assert calls(fake_prodtools_root)[-1]["args"] == {"state": None, "mine": True}
+
+
+def test_cnf_exists(fake_prodtools_root):
     assert bridge.cnf_exists("cnf.u.T.e470313.0.tar") is True
     assert bridge.cnf_exists("cnf.u.T.e470313-001.0.tar") is False
 
 
-def test_dataset_files_sorted_by_index_with_paths(fake_prodtools):
+def test_dataset_files_sorted_by_index_with_paths(fake_prodtools_root):
     files = bridge.dataset_files("nts.u.T.e470313.root", "scratch")
     assert files == [
         {"name": "nts.u.T.e470313.00000000.root", "index": 0, "size": 10,
@@ -129,35 +129,73 @@ def test_dataset_files_sorted_by_index_with_paths(fake_prodtools):
     ]
 
 
-def test_dataset_files_unknown_location(fake_prodtools):
+def test_dataset_files_unknown_location(fake_prodtools_root):
     with pytest.raises(bridge.BridgeError, match="location"):
         bridge.dataset_files("nts.u.T.e470313.root", "resilient")
 
 
-def test_dataset_files_refuses_composite_sequencer(fake_prodtools, monkeypatch):
-    monkeypatch.setattr(sys.modules["utils.samweb_wrapper"], "file_sizes_in_dataset",
-                        lambda ds: {"nts.u.T.e470313.001430_00000052.root": 5})
+def test_dataset_files_refuses_composite_sequencer(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_FILES", json.dumps([["nts.u.T.e470313.001430_00000052.root", 5]]))
+    bridge.reset()
     with pytest.raises(bridge.BridgeError, match="001430_00000052"):
         bridge.dataset_files("nts.u.T.e470313.root", "scratch")
 
 
-def test_prodtools_info_reports_root_and_commit(fake_prodtools, tmp_path):
-    import subprocess
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
+def test_missing_new_tool_names_the_prodtools_needed(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_OMIT", "locate_file,dataset_files")
+    bridge.reset()
+    with pytest.raises(bridge.BridgeError, match="no 'locate_file' tool.*locate_file and dataset_files"):
+        bridge.cnf_exists("cnf.u.T.e470313.0.tar")
+    with pytest.raises(bridge.BridgeError, match="no 'dataset_files' tool"):
+        bridge.dataset_files("nts.u.T.e470313.root", "scratch")
+
+
+def test_children_are_lazy_and_reused(fake_prodtools_root):
+    assert bridge._servers == {}
+    bridge.campaign_status(7, False)
+    assert set(bridge._servers) == {"read"} and bridge._servers["read"].started
+    bridge.tick("self", 7, False)
+    assert set(bridge._servers) == {"read", "write"}
+    first = bridge._servers["read"]
+    bridge.campaigns(mine=False)
+    assert bridge._servers["read"] is first
+
+
+def test_child_death_respawns_on_the_next_call(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_DIE", "list_campaigns")
+    bridge.reset()
+    with pytest.raises(bridge.BridgeError, match="exited during list_campaigns"):
+        bridge.campaigns(mine=True)
+    assert bridge.cnf_exists("cnf.u.T.e470313.0.tar") is True
+
+
+def test_child_that_will_not_start_reports_its_stderr(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_NO_START", "1")
+    bridge.reset()
+    with pytest.raises(bridge.BridgeError, match="did not start.*refusing to start"):
+        bridge.campaigns(mine=True)
+
+
+def test_prodtools_info_reports_root_and_commit(fake_prodtools_root):
+    subprocess.run(["git", "init", "-q", str(fake_prodtools_root)], check=True)
+    subprocess.run(["git", "-C", str(fake_prodtools_root), "-c", "user.name=t", "-c", "user.email=t@t",
                     "commit", "-q", "--allow-empty", "-m", "x"], check=True)
     info = bridge.prodtools_info()
-    assert info == {"root": str(tmp_path), "commit": info["commit"]} and len(info["commit"]) == 40
+    assert info["root"] == str(fake_prodtools_root) and len(info["commit"]) == 40
 
 
-def test_prodtools_info_without_git_reports_commit_none(fake_prodtools, tmp_path, monkeypatch):
-    def raise_missing(*a, **k):
-        raise FileNotFoundError("git")
-    from beamkit import decks
-    monkeypatch.setattr(decks.subprocess, "run", raise_missing)
-    assert bridge.prodtools_info() == {"root": str(tmp_path), "commit": None}
+def test_prodtools_info_without_git_reports_commit_none(fake_prodtools_root):
+    assert bridge.prodtools_info() == {"root": str(fake_prodtools_root), "commit": None}
 
 
-def test_campaigns_is_the_ledger_only_listing(fake_prodtools):
-    out = bridge.campaigns(mine=True)
-    assert out == [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]
+def test_prodtools_info_spawns_nothing(fake_prodtools_root):
+    bridge.prodtools_info()
+    bridge.availability()
+    assert bridge._servers == {}
+
+
+def test_calls_table_covers_every_remote_call():
+    assert set(bridge.CALLS) == {"push_cnf", "run_submissions", "push_file", "campaign_status",
+                                 "list_campaigns", "locate_file", "dataset_files"}
+    kind, always, optional = bridge.CALLS["push_cnf"]
+    assert kind == "write" and "json" in always and optional == frozenset({"prodtools_dir"})

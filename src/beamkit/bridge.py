@@ -1,102 +1,185 @@
-"""The ONLY module that imports prodtools. Every import is inside a function
-so the rest of beamkit, and every unit test, runs with prodtools absent.
+"""The ONLY module that talks to prodtools, as an MCP client of the two
+prodtools servers (prodtools-write, prodtools) spawned from
+$BEAMKIT_PRODTOOLS_ROOT/mcp/scripts/. beamkit's interpreter imports no
+prodtools code and needs none of its environment; the launchers set that
+up inside the children. Children start on the first Fermilab call, live
+until beamkit exits, and are respawned if they die. Every failure is a
+BridgeError. Reads one environment variable, the root."""
+import os
+import threading
+from pathlib import Path
 
-Wraps prodtools' own MCP tool functions in-process (their gates included)
-plus three read-only helpers from prodtools utils. No ledger access."""
 from beamkit import BeamkitError
 from beamkit.decks import DeckError, _git
+from beamkit.mcpclient import McpClientError, McpToolError, StdioServer
 
-_HINT = ("prodtools is not importable here. Start beamkit through "
-         "scripts/start_mcp.sh with BEAMKIT_PRODTOOLS_ROOT set to a prodtools "
-         "checkout whose mcp/.venv is installed, or through a cvmfs release's "
-         "scripts/beamkit-mcp-cvmfs")
+ROOT_VAR = "BEAMKIT_PRODTOOLS_ROOT"
+ROOT_DEFAULT = "/cvmfs/mu2e.opensciencegrid.org/bin/prodtools/current"
+LAUNCHERS = {"write": "mcp/scripts/start_write_mcp.sh", "read": "mcp/scripts/start_mcp.sh"}
+
+# tool -> (child, arguments always sent, arguments sent only when set);
+# the contract test checks these against the real servers' schemas
+CALLS = {
+    "push_cnf": ("write", frozenset({"json", "desc", "dsconf", "slice_size", "run_as", "confirm"}),
+                 frozenset({"prodtools_dir"})),
+    "run_submissions": ("write", frozenset({"run_as", "campaign_id", "confirm"}), frozenset()),
+    "push_file": ("write", frozenset({"path", "location", "parents", "run_as", "confirm"}), frozenset()),
+    "campaign_status": ("read", frozenset({"campaign_id", "mine"}), frozenset()),
+    "list_campaigns": ("read", frozenset({"mine"}), frozenset()),
+    "locate_file": ("read", frozenset({"name"}), frozenset()),
+    "dataset_files": ("read", frozenset({"dataset", "location"}), frozenset()),
+}
+NEEDS = {"locate_file": "the prodtools release that carries locate_file and dataset_files (Mu2e/prodtools PR "
+                        "'mcp: locate_file and dataset_files read-only tools', 2026-09)",
+         "dataset_files": "the prodtools release that carries locate_file and dataset_files (Mu2e/prodtools PR "
+                          "'mcp: locate_file and dataset_files read-only tools', 2026-09)"}
+
+_HINT = (f"prodtools is not reachable: set {ROOT_VAR} to a prodtools tree that has "
+         f"{LAUNCHERS['write']} and {LAUNCHERS['read']} (the cvmfs release, or a checkout after "
+         f"`bash mcp/scripts/install.sh`)")
 
 
 class BridgeError(BeamkitError):
     pass
 
 
-def _import(modname):
-    import importlib
-    try:
-        return importlib.import_module(modname)
-    except ImportError as e:
-        raise BridgeError(f"{_HINT} ({modname}: {e})") from e
+# --- where prodtools is
 
+def prodtools_root() -> str:
+    return os.environ.get(ROOT_VAR) or ROOT_DEFAULT
+
+
+def launcher(kind) -> Path:
+    return Path(prodtools_root()) / LAUNCHERS[kind]
+
+
+def availability() -> tuple:
+    """(available, detail) without spawning anything: both launchers must
+    exist and be executable."""
+    root = prodtools_root()
+    missing = [str(launcher(k)) for k in LAUNCHERS if not os.access(launcher(k), os.X_OK)]
+    if missing:
+        return False, f"{_HINT}; missing: {', '.join(missing)}"
+    return True, f"prodtools at {root}"
+
+
+def prodtools_info() -> dict:
+    root = prodtools_root()
+    try:
+        commit = _git("rev-parse", "HEAD", cwd=root)
+    except (DeckError, OSError):
+        commit = None       # a cvmfs release is not a git checkout
+    return {"root": root, "commit": commit}
+
+
+# --- the children
+
+_servers = {}
+_lock = threading.Lock()
+
+
+def _server(kind) -> StdioServer:
+    with _lock:
+        s = _servers.get(kind)
+        if s is None:
+            ok, detail = availability()
+            if not ok:
+                raise BridgeError(detail)
+            s = _servers[kind] = StdioServer(f"prodtools-{kind}", str(launcher(kind)))
+        return s
+
+
+def reset() -> None:
+    """Close both children (tests, and a root change)."""
+    with _lock:
+        for s in _servers.values():
+            s.close()
+        _servers.clear()
+
+
+def _started(kind) -> StdioServer:
+    s = _server(kind)
+    try:
+        s.start()
+    except McpClientError as e:
+        raise BridgeError(str(e)) from e
+    return s
+
+
+def _call(tool, **args) -> dict:
+    kind = CALLS[tool][0]
+    s = _started(kind)
+    if not s.has_tool(tool):
+        need = NEEDS.get(tool)
+        raise BridgeError(f"the prodtools at {prodtools_root()} has no {tool!r} tool"
+                          + (f"; it needs {need}" if need else ""))
+    try:
+        out = s.call(tool, **args)
+    except McpToolError as e:
+        raise BridgeError(e.message) from e
+    except McpClientError as e:
+        raise BridgeError(str(e)) from e
+    err = out.get("error") if isinstance(out, dict) else None
+    if isinstance(err, dict):           # the read server's safe_tool envelope
+        msg = f"{err.get('message', 'prodtools error')} ({err.get('kind', 'unknown')})"
+        remedy = err.get("remedy")
+        raise BridgeError(f"{msg}; {remedy}" if remedy else msg)
+    return out
+
+
+# --- the nine calls beamkit makes
 
 def push_cnf(json_path, desc, dsconf, slice_size, run_as, confirm, prodtools_dir=None) -> dict:
     """prodtools_dir names a dev checkout to ship to the workers; None means
     the cvmfs release and the keyword is not sent at all."""
-    tools = _import("prodtools_mcp_write.tools")
     kw = {"prodtools_dir": prodtools_dir} if prodtools_dir else {}
-    return tools.push_cnf(json=str(json_path), desc=desc, dsconf=dsconf,
-                          slice_size=slice_size, run_as=run_as, confirm=confirm, **kw)
+    return _call("push_cnf", json=str(json_path), desc=desc, dsconf=dsconf,
+                 slice_size=slice_size, run_as=run_as, confirm=confirm, **kw)
 
 
 def tick(run_as, campaign_id, confirm) -> dict:
-    tools = _import("prodtools_mcp_write.tools")
-    return tools.run_submissions(run_as=run_as, campaign_id=campaign_id, confirm=confirm)
+    return _call("run_submissions", run_as=run_as, campaign_id=campaign_id, confirm=confirm)
 
 
 def push_file_available() -> bool:
     """Whether this prodtools exposes a push_file tool. The boundary probe:
     make_beamfile asks before it reads a dataset or builds anything, so a
     publish=True that cannot possibly succeed costs a second, not hours."""
-    tools = _import("prodtools_mcp_write.tools")
-    return getattr(tools, "push_file", None) is not None
+    return _started("write").has_tool("push_file")
 
 
 def push_file(path, location, parents, run_as, confirm) -> dict:
-    tools = _import("prodtools_mcp_write.tools")
-    fn = getattr(tools, "push_file", None)
-    if fn is None:
+    if not push_file_available():
         raise BridgeError("this prodtools has no push_file tool; make_beamfile works with "
                           "publish=False only until prodtools-write gains push_file")
-    return fn(path=str(path), location=location, parents=list(parents),
-              run_as=run_as, confirm=confirm)
+    return _call("push_file", path=str(path), location=location, parents=list(parents),
+                 run_as=run_as, confirm=confirm)
 
 
 def campaign_status(campaign_id, mine) -> dict:
-    status = _import("prodtools_mcp.tools.status")
-    return status.campaign_status(campaign_id=campaign_id, mine=mine)
+    return _call("campaign_status", campaign_id=campaign_id, mine=mine)
 
 
-def campaigns(mine) -> list[dict]:
+def campaigns(mine) -> list:
     """Every campaign in the caller's ledger (personal for mine=True,
     production otherwise) with its state. Ledger only, no network."""
-    status = _import("prodtools_mcp.tools.status")
-    return list(status.list_campaigns(mine=mine)["campaigns"])
+    return list(_call("list_campaigns", mine=mine)["campaigns"])
 
 
 def cnf_exists(cnf_name) -> bool:
-    sw = _import("utils.samweb_wrapper")
-    return bool(sw.locate_file(cnf_name))
+    return bool(_call("locate_file", name=cnf_name)["exists"])
 
 
-def dataset_files(dataset, location) -> list[dict]:
-    sw = _import("utils.samweb_wrapper")
-    fr = _import("utils.file_resolver")
-    jc = _import("utils.job_common")
-    root = fr.dataset_dir(dataset, location)
-    if not root:
-        raise BridgeError(f"unknown dataset location {location!r} for {dataset}")
-    sizes = sw.file_sizes_in_dataset(dataset)
-    out = []
-    for name in sizes:
-        n = jc.Mu2eName.parse(name)
-        if not n.sequencer.isdigit():
-            raise BridgeError(f"{name}: sequencer {n.sequencer!r} is not a plain job index; "
+def dataset_files(dataset, location) -> list:
+    """prodtools lists the files with sizes and /pnfs paths; the job index
+    is beamkit's reading of the sequencer, and only a plain %08d one."""
+    out = _call("dataset_files", dataset=dataset, location=location)
+    files = []
+    for f in out["files"]:
+        parts = f["name"].split(".")
+        seq = parts[4] if len(parts) >= 6 else ""
+        if not seq.isdigit():
+            raise BridgeError(f"{f['name']}: sequencer {seq!r} is not a plain job index; "
                               f"beamkit reads only %08d-indexed g4bl outputs")
-        out.append({"name": name, "index": int(n.sequencer), "size": sizes[name],
-                    "path": f"{root}/{n.relpathname()}"})
-    return sorted(out, key=lambda f: f["index"])
-
-
-def prodtools_info() -> dict:
-    runner = _import("prodtools_mcp_write.runner")
-    root = runner.REPO_ROOT
-    try:
-        commit = _git("rev-parse", "HEAD", cwd=root)
-    except (DeckError, OSError):
-        commit = None       # a cvmfs release is not a git checkout
-    return {"root": root, "commit": commit}
+        files.append({"name": f["name"], "index": int(seq), "size": int(f["size"]), "path": f["path"]})
+    return sorted(files, key=lambda f: f["index"])
