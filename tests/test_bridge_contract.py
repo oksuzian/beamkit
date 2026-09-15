@@ -22,16 +22,30 @@ pytestmark = pytest.mark.skipif(
     reason="BEAMKIT_PRODTOOLS_ROOT does not name a prodtools checkout with mcp/.venv installed")
 
 
+def _close_all(started):
+    """Close every server independently: one raising close() must not
+    skip the others."""
+    for s in started.values():
+        try:
+            s.close()
+        except Exception:      # noqa: BLE001 - tearing down regardless
+            pass
+
+
 @pytest.fixture(scope="module")
 def servers():
     started = {}
-    for kind in ("write", "read"):
-        s = StdioServer(f"prodtools-{kind}", str(bridge.launcher(kind)), start_timeout=300)
-        s.start()
-        started[kind] = s
+    try:
+        for kind in ("write", "read"):
+            s = StdioServer(f"prodtools-{kind}", str(bridge.launcher(kind)), start_timeout=300)
+            s.start()
+            started[kind] = s
+    except Exception:
+        # a later start() failing must not leak an earlier, already-live child
+        _close_all(started)
+        raise
     yield started
-    for s in started.values():
-        s.close()
+    _close_all(started)
 
 
 def test_every_bridge_call_matches_the_real_tool_schema(servers):
