@@ -337,11 +337,9 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
 
 def get_server_info() -> dict:
     """beamkit version, which backends this host can drive, directories, limits."""
-    try:
-        pt = bridge.prodtools_info()
-        fermilab = {"available": True, "detail": f"prodtools at {pt['root']}"}
-    except BeamkitError as e:
-        pt, fermilab = None, {"available": False, "detail": str(e)}
+    available, detail = bridge.availability()
+    pt = bridge.prodtools_info() if available else None
+    fermilab = {"available": available, "detail": detail}
     cfg_path = nersc_config.config_path(paths.home())
     try:
         cfg = nersc_config.load(paths.home())

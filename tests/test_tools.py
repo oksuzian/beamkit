@@ -39,6 +39,7 @@ def fake_bridge(monkeypatch, deck):
     monkeypatch.setattr(tools.bridge, "tick", tick)
     monkeypatch.setattr(tools.bridge, "cnf_exists", cnf_exists)
     monkeypatch.setattr(tools.bridge, "prodtools_info", lambda: {"root": "/pt", "commit": "c" * 40})
+    monkeypatch.setattr(tools.bridge, "availability", lambda: (True, "prodtools at /pt"))
     monkeypatch.setattr(tools.bridge, "campaign_status", lambda campaign_id, mine: {"campaign_id": campaign_id, "mine": mine})
     calls["campaigns"] = []
     def campaigns(mine):
@@ -505,8 +506,15 @@ def test_get_server_info_reports_backends(fake_bridge, beamkit_home):
 
 
 def test_get_server_info_without_prodtools_still_answers(fake_bridge, monkeypatch):
-    def gone():
-        raise tools.bridge.BridgeError("prodtools is not importable here")
-    monkeypatch.setattr(tools.bridge, "prodtools_info", gone)
+    monkeypatch.setattr(tools.bridge, "availability",
+                        lambda: (False, "prodtools is not reachable: set BEAMKIT_PRODTOOLS_ROOT"))
     info = tools.get_server_info()
-    assert info["backends"]["fermilab"]["available"] is False and info["prodtools"] is None
+    assert info["backends"]["fermilab"] == {"available": False,
+                                            "detail": "prodtools is not reachable: set BEAMKIT_PRODTOOLS_ROOT"}
+    assert info["prodtools"] is None
+
+
+def test_get_server_info_spawns_no_prodtools_child(fake_prodtools_root, beamkit_home):
+    tools.get_server_info()
+    from beamkit import bridge
+    assert bridge._servers == {}
