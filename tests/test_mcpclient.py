@@ -1,6 +1,7 @@
 """StdioServer against tests/fake_prodtools_mcp.py as a real child process."""
 import os
 import sys
+import time
 
 import pytest
 
@@ -14,6 +15,41 @@ def fake(role, **env_extra):
     env = dict(os.environ, PYTHONPATH=REPO, **{k: str(v) for k, v in env_extra.items()})
     return StdioServer(f"fake-{role}", sys.executable, ["-m", "tests.fake_prodtools_mcp", role],
                        env=env, start_timeout=60)
+
+
+def _fake_prodtools_pids():
+    """PIDs of live `-m tests.fake_prodtools_mcp <role>` processes, found by an
+    exact argv match. A substring search over the raw /proc/*/cmdline text
+    would also match the shell this suite itself runs under (its command
+    line, quoted whole, contains this module name too); matching against the
+    parsed argv list only catches an actual `python -m tests.fake_prodtools_mcp
+    ...` child."""
+    pids = set()
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as fh:
+                argv = fh.read().decode("utf-8", "replace").split("\0")
+        except OSError:
+            continue
+        if "tests.fake_prodtools_mcp" in argv:
+            pids.add(int(entry))
+    return pids
+
+
+def _assert_no_leaked_children(before, timeout=5):
+    """Regression guard for the orphan-child bug fixed in _teardown: any
+    fake-prodtools pid not present in `before` must be gone shortly after the
+    StdioServer.close() that already ran. A bounded poll -- never an
+    unbounded wait -- gives the OS a moment to finish reaping a just-killed
+    process."""
+    deadline = time.monotonic() + timeout
+    leaked = _fake_prodtools_pids() - before
+    while leaked and time.monotonic() < deadline:
+        time.sleep(0.2)
+        leaked = _fake_prodtools_pids() - before
+    assert not leaked, f"leaked fake prodtools child process(es): {sorted(leaked)}"
 
 
 @pytest.fixture
@@ -70,6 +106,7 @@ def test_unknown_tool_is_a_client_error(read):
 
 
 def test_child_death_closes_and_next_call_respawns():
+    before = _fake_prodtools_pids()
     s = fake("read", FAKE_PRODTOOLS_DIE="list_campaigns")
     try:
         with pytest.raises(McpClientError, match="exited during list_campaigns"):
@@ -79,6 +116,7 @@ def test_child_death_closes_and_next_call_respawns():
         assert s.started
     finally:
         s.close()
+    _assert_no_leaked_children(before)
 
 
 def test_no_start_reports_the_childs_stderr():
@@ -92,6 +130,7 @@ def test_no_start_reports_the_childs_stderr():
 
 
 def test_start_timeout():
+    before = _fake_prodtools_pids()
     s = fake("read", FAKE_PRODTOOLS_HANG_START="1")
     s.start_timeout = 2
     try:
@@ -100,6 +139,7 @@ def test_start_timeout():
         assert not s.started
     finally:
         s.close()
+    _assert_no_leaked_children(before)
 
 
 def test_start_timeout_default_and_env(monkeypatch):
