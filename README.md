@@ -16,8 +16,16 @@ start Claude Code (or to `~/.claude.json`):
   "/cvmfs/mu2e.opensciencegrid.org/bin/beamkit/current/scripts/beamkit-mcp-cvmfs"}}}
 ```
 
-**On a laptop (NERSC only):** `pip install git+https://github.com/oksuzian/beamkit.git@v0.3.1`,
-then `{"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}`.
+**Anywhere else (NERSC only), nothing to install** if you have
+[uv](https://docs.astral.sh/uv/):
+
+```json
+{"mcpServers": {"beamkit": {"command": "uvx",
+  "args": ["--from", "git+https://github.com/oksuzian/beamkit@v0.3.1", "beamkit-mcp"]}}}
+```
+
+or `pip install git+https://github.com/oksuzian/beamkit.git@v0.3.1` and
+`{"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}`.
 
 **For NERSC jobs, either way:** a Superfacility API client in `~/.sfapi/`
 and a `nersc.toml`; five minutes, see [docs/nersc.md](docs/nersc.md).
