@@ -222,6 +222,8 @@ Nothing new is exposed.
 The children run as the same Unix user as beamkit, with the same
 Kerberos ticket and tokens. Nothing is delegated.
 
+> Addendum (final review, 2026-09-15). The default root is the cvmfs prodtools release, and `availability()` is satisfied by two executable launchers, which is true on every Mu2e gpvm. So an unconfigured `uvx` beamkit on any Mu2e host can spawn `prodtools-write` and, with `run_as="mu2epro"` and `confirm=true` from the caller, submit production jobs; the beamkit-side `confirm` gate in `identity.resolve` and prodtools-write's own refusal without `confirm=true` are the only gates, exactly as with the in-process bridge before this change. The install no longer acts as an accidental gate. Recommended, outside this spec: a Claude Code PreToolUse hook on beamkit's `run_beamline`, `make_recoveries` and `make_beamfile` that prompts whenever `run_as` is `mu2epro`, mirroring the existing `prodtools-write` guard hook.
+
 ## 10. Distribution
 
 Removed from the repo:

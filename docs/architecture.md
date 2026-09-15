@@ -82,11 +82,16 @@ graph TB
 ```
 
 Three boundaries carry the design (shaded above). `server.py` is the only
-thing that knows about MCP; `bridge.py` is the only thing that knows about
-prodtools; `iri.py` is the only thing that knows about the NERSC
-Superfacility API. None of the three contains logic. Every other module can
-be read, tested, and reasoned about with prodtools, `mcp`, and the network
-all absent — which is exactly how the test suite runs.
+module that *serves* MCP — it is beamkit's own MCP server, the thing a
+caller like Claude Code talks to. `mcpclient.py` and `bridge.py` are MCP
+*clients*: they spawn and speak to prodtools' own two MCP servers
+(`prodtools`, `prodtools-write`) over stdio, the same relationship beamkit's
+caller has to `server.py`, one level down. `iri.py` and `sfapi.py` are the
+only modules that know the NERSC Superfacility API. None of these contains
+logic. Every other module can be read, tested, and reasoned about with
+prodtools and the network absent — which is exactly how the test suite
+runs; its far end is `tests/fake_prodtools_mcp.py`, a stand-in for both
+prodtools servers that needs only `mcp`.
 
 ## What each file is for
 

@@ -43,6 +43,16 @@ class BridgeError(BeamkitError):
     pass
 
 
+def _need(out, key, tool):
+    """Read `key` out of a tool's result dict, or raise BridgeError: a
+    result-shape drift between beamkit and the far end's prodtools must
+    surface as BridgeError, never a bare KeyError."""
+    if not isinstance(out, dict) or key not in out:
+        raise BridgeError(f"{tool}: prodtools returned no {key!r} in its result ({str(out)[:200]}); "
+                          f"the prodtools at {prodtools_root()} may be older or newer than this beamkit")
+    return out[key]
+
+
 # --- where prodtools is
 
 def prodtools_root() -> str:
@@ -163,11 +173,13 @@ def campaign_status(campaign_id, mine) -> dict:
 def campaigns(mine) -> list:
     """Every campaign in the caller's ledger (personal for mine=True,
     production otherwise) with its state. Ledger only, no network."""
-    return list(_call("list_campaigns", mine=mine)["campaigns"])
+    out = _call("list_campaigns", mine=mine)
+    return list(_need(out, "campaigns", "list_campaigns"))
 
 
 def cnf_exists(cnf_name) -> bool:
-    return bool(_call("locate_file", name=cnf_name)["exists"])
+    out = _call("locate_file", name=cnf_name)
+    return bool(_need(out, "exists", "locate_file"))
 
 
 def dataset_files(dataset, location) -> list:
@@ -175,11 +187,14 @@ def dataset_files(dataset, location) -> list:
     is beamkit's reading of the sequencer, and only a plain %08d one."""
     out = _call("dataset_files", dataset=dataset, location=location)
     files = []
-    for f in out["files"]:
-        parts = f["name"].split(".")
+    for f in _need(out, "files", "dataset_files"):
+        name = _need(f, "name", "dataset_files")
+        size = _need(f, "size", "dataset_files")
+        path = _need(f, "path", "dataset_files")
+        parts = name.split(".")
         seq = parts[4] if len(parts) >= 6 else ""
         if not seq.isdigit():
-            raise BridgeError(f"{f['name']}: sequencer {seq!r} is not a plain job index; "
+            raise BridgeError(f"{name}: sequencer {seq!r} is not a plain job index; "
                               f"beamkit reads only %08d-indexed g4bl outputs")
-        files.append({"name": f["name"], "index": int(seq), "size": int(f["size"]), "path": f["path"]})
+        files.append({"name": name, "index": int(seq), "size": int(size), "path": path})
     return sorted(files, key=lambda f: f["index"])

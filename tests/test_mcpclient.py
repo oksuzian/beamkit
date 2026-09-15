@@ -109,8 +109,9 @@ def test_child_death_closes_and_next_call_respawns():
     before = _fake_prodtools_pids()
     s = fake("read", FAKE_PRODTOOLS_DIE="list_campaigns")
     try:
-        with pytest.raises(McpClientError, match="exited during list_campaigns"):
+        with pytest.raises(McpClientError, match="exited during list_campaigns") as ei:
             s.call("list_campaigns", mine=True)
+        assert "fake prodtools: dying inside list_campaigns" in str(ei.value)
         assert not s.started
         assert s.call("locate_file", name="x.y.z.w.0.tar")["exists"] is False
         assert s.started
@@ -154,3 +155,5 @@ def test_close_is_idempotent_and_restartable(read):
     read.close()
     assert not read.started
     assert read.call("get_server_info")["name"] == "prodtools"
+    serving_lines = [l for l in read.stderr_tail if "fake prodtools read: serving" in l]
+    assert len(serving_lines) == 1

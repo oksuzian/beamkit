@@ -194,6 +194,18 @@ def test_prodtools_info_spawns_nothing(fake_prodtools_root):
     assert bridge._servers == {}
 
 
+@pytest.mark.parametrize("tool, call", [
+    ("list_campaigns", lambda: bridge.campaigns(mine=True)),
+    ("locate_file", lambda: bridge.cnf_exists("cnf.u.T.e470313.0.tar")),
+    ("dataset_files", lambda: bridge.dataset_files("nts.u.T.e470313.root", "scratch")),
+])
+def test_missing_result_key_is_a_bridge_error(fake_prodtools_root, monkeypatch, tool, call):
+    monkeypatch.setenv("FAKE_PRODTOOLS_SHAPE", tool)
+    bridge.reset()
+    with pytest.raises(bridge.BridgeError, match="returned no"):
+        call()
+
+
 def test_calls_table_covers_every_remote_call():
     assert set(bridge.CALLS) == {"push_cnf", "run_submissions", "push_file", "campaign_status",
                                  "list_campaigns", "locate_file", "dataset_files"}

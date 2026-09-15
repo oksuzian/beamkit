@@ -30,6 +30,13 @@ def _trip(tool):
         raise RuntimeError(f"{tool} refused by the fake; remedy: try the other thing")
 
 
+def _shape(tool):
+    """Returning-not-raising sibling of _trip: FAKE_PRODTOOLS_SHAPE=<tool> makes
+    that read tool return a result missing its expected key(s), simulating a
+    result-shape drift between beamkit and prodtools."""
+    return os.environ.get("FAKE_PRODTOOLS_SHAPE") == tool
+
+
 def _envelope(kind, message, remedy):
     return {"error": {"kind": kind, "message": message, "remedy": remedy}}
 
@@ -87,6 +94,8 @@ def campaign_status(campaign: str = None, campaign_id: int = None, include_queue
 def list_campaigns(state: str = None, mine: bool = False) -> dict:
     _record("list_campaigns", {"state": state, "mine": mine})
     _trip("list_campaigns")
+    if _shape("list_campaigns"):
+        return {"unexpected": 1}
     return {"count": 1, "db_path": "/db", "called": {"state": state, "mine": mine},
             "campaigns": [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]}
 
@@ -95,6 +104,8 @@ def list_campaigns(state: str = None, mine: bool = False) -> dict:
 def locate_file(name: str) -> dict:
     _record("locate_file", {"name": name})
     _trip("locate_file")
+    if _shape("locate_file"):
+        return {"unexpected": 1}
     exists = name.endswith("e470313.0.tar")
     return {"name": name, "exists": exists, "locations": ["enstore:/x"] if exists else []}
 
@@ -103,6 +114,8 @@ def locate_file(name: str) -> dict:
 def dataset_files(dataset: str, location: str) -> dict:
     _record("dataset_files", {"dataset": dataset, "location": location})
     _trip("dataset_files")
+    if _shape("dataset_files"):
+        return {"unexpected": 1}
     if location not in ("scratch", "disk", "tape"):
         return _envelope("invalid_argument", f"unknown dataset location {location!r} for {dataset}",
                          "Use one of scratch, disk, tape.")

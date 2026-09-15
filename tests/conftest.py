@@ -31,7 +31,8 @@ def fake_prodtools_root(tmp_path, monkeypatch):
     monkeypatch.setenv("BEAMKIT_PRODTOOLS_START_TIMEOUT", "60")
     monkeypatch.setenv("FAKE_PRODTOOLS_CALLS", str(tmp_path / "calls.jsonl"))
     for var in ("FAKE_PRODTOOLS_FAIL", "FAKE_PRODTOOLS_DIE", "FAKE_PRODTOOLS_OMIT",
-                "FAKE_PRODTOOLS_NO_START", "FAKE_PRODTOOLS_HANG_START", "FAKE_PRODTOOLS_FILES"):
+                "FAKE_PRODTOOLS_NO_START", "FAKE_PRODTOOLS_HANG_START", "FAKE_PRODTOOLS_FILES",
+                "FAKE_PRODTOOLS_SHAPE"):
         monkeypatch.delenv(var, raising=False)
     bridge.reset()
     yield tmp_path / "prodtools"

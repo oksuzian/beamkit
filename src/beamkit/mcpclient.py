@@ -82,6 +82,7 @@ class StdioServer:
         with self._lock:
             if self._session is not None:
                 return
+            self._stderr_tail.clear()
             self._loop = asyncio.new_event_loop()
             self._thread = threading.Thread(target=self._loop.run_forever,
                                             name=f"mcp-{self.name}", daemon=True)
@@ -184,7 +185,8 @@ class StdioServer:
             try:
                 asyncio.run_coroutine_threadsafe(_cancel_and_wait(), loop).result(5)
             except Exception:   # noqa: BLE001 - best effort; teardown proceeds regardless
-                pass
+                sys.stderr.write(f"{self.name}: serve task did not finish within 5 s; "
+                                 f"child may still be running\n")
         self._serve_fut = self._stop = self._task = None
         self._loop = self._thread = None
         if loop is not None:
@@ -207,8 +209,11 @@ class StdioServer:
                 res = fut.result()
             except Exception as e:      # noqa: BLE001 - the transport is gone, whatever the type
                 self.close()
+                if self._pump is not None:
+                    self._pump.join(2)      # let the child's last stderr lines land
+                tail = " | ".join(self._stderr_tail)
                 raise McpClientError(f"{self.name} server exited during {tool}: "
-                                     f"{type(e).__name__}: {e}") from e
+                                     f"{type(e).__name__}: {e}; child stderr: {tail}") from e
         text = "".join(c.text for c in res.content if getattr(c, "type", None) == "text")
         if res.isError:
             raise McpToolError(self.name, tool, _strip_prefix(text, tool))
