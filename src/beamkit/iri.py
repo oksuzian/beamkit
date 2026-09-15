@@ -169,11 +169,11 @@ class IriClient:
         return out if isinstance(out, str) else json.dumps(out)
 
     def download_bytes(self, remote) -> bytes:
-        # v2's download has no binary flag and its encoding of a non-text
-        # file is unverified (the adapter was down when this was written):
-        # refuse rather than write a corrupt ROOT file
-        raise IriError(f"download of a binary file over the iri transport is unverified ({remote}); "
-                       "set transport = \"sfapi\" in nersc.toml")
+        # v2's download has no binary flag: on a ROOT file the task fails
+        # server-side with pydantic's string_unicode error (checked
+        # 2026-09-14), so there is nothing to decode
+        raise IriError(f"the IRI v2 API cannot download a binary file ({remote}): its download task fails "
+                       "with a string_unicode error; set transport = \"sfapi\" in nersc.toml for fetch_outputs")
 
     # --- compute
     def _compute(self):

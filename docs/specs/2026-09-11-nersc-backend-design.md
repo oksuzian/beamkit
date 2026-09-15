@@ -480,7 +480,7 @@ in `dest` with the CFS size is reported `present` and not fetched.
 
 `download_bytes` is `utilities/download?binary=true` (base64) on the
 `sfapi` transport; the `iri` transport raises, because v2's download
-has no binary flag and its handling of a non-text file was not
-verifiable while the adapter was down. Fermilab runs are refused: their
+has no binary flag and its task fails on a ROOT file with pydantic's
+`string_unicode` error (checked 2026-09-14 once the adapter was back). Fermilab runs are refused: their
 outputs are in dCache already. Large-file retrieval (Globus) and
 harvest to SAM remain v2.

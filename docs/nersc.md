@@ -48,8 +48,10 @@ file on either transport. A run with one larger file is refused whole:
 move those with Globus (the NERSC "Perlmutter" collection) or `scp`
 from a Perlmutter login node. Files already in `dest` with the CFS
 size are not fetched again, so a rerun completes an interrupted copy.
-Binary download is verified on the `sfapi` transport only; the `iri`
-transport refuses it until v2's encoding of a non-text file is checked.
+Only the `sfapi` transport can carry a binary file (`binary=true`,
+base64); IRI v2's download task fails on a ROOT file with a
+`string_unicode` error (checked 2026-09-14), so `fetch_outputs` on the
+`iri` transport refuses and says to switch.
 
 ## The Superfacility API client
 

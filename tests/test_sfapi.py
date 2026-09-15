@@ -125,7 +125,7 @@ def test_iri_transport_refuses_binary_download(cfg, tmp_path):
     from dataclasses import replace
     from tests.fake_iri import FakeSession
     c = iri.IriClient(replace(cfg, transport="iri"), token_provider=lambda: "tok", session=FakeSession())
-    with pytest.raises(iri.IriError, match="unverified"):
+    with pytest.raises(iri.IriError, match="cannot download a binary file"):
         c.download_bytes("/x.root")
 
 
