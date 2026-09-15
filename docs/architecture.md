@@ -44,13 +44,13 @@ graph TB
             REC["<b>records.py</b><br/>runs/&lt;run_id&gt;/run.json —<br/>only what prodtools does not know"]
         end
 
-        BRG["<b>bridge.py</b><br/>the ONLY module that imports prodtools.<br/>Every import is inside a function, so beamkit<br/>and its whole test suite run with prodtools absent."]
+        BRG["<b>bridge.py</b><br/>the ONLY module that talks to prodtools:<br/>an MCP client of the two prodtools servers,<br/>spawned from BEAMKIT_PRODTOOLS_ROOT on the first Fermilab call."]
 
         subgraph nersc_backend["backends/ — the NERSC path"]
             NB["<b>backends/nersc.py</b><br/>orchestrates layout, submit, status —<br/>the site=nersc mirror of tools.py"]
             NCFG["<b>nersc_config.py</b><br/>loads + validates $BEAMKIT_HOME/nersc.toml"]
             NCNF["<b>nersc_cnf.py</b><br/>builds the cnf tarball locally,<br/>jobpars shaped like json2jobdef's"]
-            NTPL["<b>nersc_templates.py</b><br/>fills job.sh / inner.sh / beamfile.sh —<br/>carries prodtools' g4bl recipe, checked<br/>byte-equal by the bridge contract probe"]
+            NTPL["<b>nersc_templates.py</b><br/>fills job.sh / inner.sh / beamfile.sh —<br/>carries prodtools' g4bl recipe, checked<br/>byte-equal by the contract probe"]
             IRI["<b>iri.py</b><br/>thin client for the IRI Facility API:<br/>paths in, parsed JSON out, IriError otherwise"]
         end
     end
@@ -94,7 +94,8 @@ all absent — which is exactly how the test suite runs.
 | --- | --- |
 | `server.py` | FastMCP registration: a name→description table registering all eight tools, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
 | `tools.py` | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, dispatches on `site` (`fermilab` through prodtools, `nersc` through `backends/nersc.py`), then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
-| `bridge.py` | Lazy, in-function imports of prodtools. Converts every prodtools failure into `BridgeError`. Reads no environment: the dev checkout arrives as an argument. |
+| `bridge.py` | MCP client of prodtools' write and read servers (`mcpclient.StdioServer` per child, lazy, kept for the process life). Converts every prodtools failure into `BridgeError`: isError text from the write server, the `{"error": ...}` envelope from the read server. Reads one environment variable, `BEAMKIT_PRODTOOLS_ROOT`; the dev checkout to ship arrives as an argument. |
+| `mcpclient.py` | A synchronous handle on one MCP server over stdio: private event loop in a daemon thread, one serve task for the session's life, stderr tail for start failures, respawn after a child dies. Knows nothing about prodtools. |
 | `beamfile.py` | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
 | `decks.py` | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
 | `records.py` | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`, `partially_submitted`, `short`, `complete`. prodtools' ledger is the system of record for submission state on the Fermilab path; the last three states are NERSC-only, computed from Slurm and `out/` since there is no ledger there. |
@@ -117,10 +118,11 @@ Line counts are not tracked here: they drift every time a fix lands and a
 stale number is worse than none. `git ls-files 'src/beamkit/**/*.py' | xargs
 wc -l` gets the current ones.
 
-The test suite fakes every prodtools symbol, so one more test holds the
-bridge seam honest: with `BEAMKIT_PRODTOOLS_ROOT` naming a checkout,
-`tests/test_bridge_contract.py` imports the real modules in a subprocess and
-binds every call `bridge.py` makes to the real signature. It skips otherwise.
+The test suite spawns a fake prodtools MCP server as the far end, so one more
+test holds the seam honest: with `BEAMKIT_PRODTOOLS_ROOT` naming a checkout
+with its MCP venv installed, `tests/test_bridge_contract.py` starts the real
+prodtools servers and checks every argument `bridge.py` sends against their
+tool schemas, plus the facts beamkit copies. It skips otherwise.
 
 ## Submitting a run
 
@@ -231,8 +233,9 @@ because on a large run that read is hours long.
 
 ## The rules that shaped it
 
-- **One import point.** Only `bridge.py` imports prodtools, and only inside
-  functions. This is what lets the suite run anywhere.
+- **One import point.** Only `bridge.py` talks to prodtools, over MCP, so
+  beamkit's interpreter carries none of prodtools' environment. This is what
+  lets the suite run anywhere.
 - **No fallbacks.** Validate at the boundary and fail loudly naming the cause.
   The one deliberate exception is `backends/nersc.out_counts`, which reads a
   missing CFS `out/` (a run that failed before its remote layout was ever

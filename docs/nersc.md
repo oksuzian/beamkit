@@ -11,7 +11,7 @@ laptop `~/.beamkit/`. Step 2 is laptop-only.
 
 1. Create the API client (see "The Superfacility API client" below) and
    save its id and private key under `~/.sfapi/`.
-2. Laptop only: `pip install git+https://github.com/oksuzian/beamkit.git@v0.3.1` (Python 3.10+, git on PATH).
+2. Laptop only: `pip install git+https://github.com/oksuzian/beamkit.git@v0.4.0` (Python 3.10+, git on PATH).
 3. Write `nersc.toml` in the records dir:
 
    ```toml

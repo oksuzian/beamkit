@@ -8,27 +8,26 @@ NERSC nothing but your own NERSC account is involved.
 
 ## Use it
 
-**On a Mu2e gpvm:** nothing to install. Add to `.mcp.json` where you
-start Claude Code (or to `~/.claude.json`):
-
-```json
-{"mcpServers": {"beamkit": {"command":
-  "/cvmfs/mu2e.opensciencegrid.org/bin/beamkit/current/scripts/beamkit-mcp-cvmfs"}}}
-```
-
-**Anywhere else (NERSC only), nothing to install** if you have
-[uv](https://docs.astral.sh/uv/):
+One line, every host, if [uv](https://docs.astral.sh/uv/) is installed
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`). Add to `.mcp.json`
+where you start Claude Code, or to `~/.claude.json`:
 
 ```json
 {"mcpServers": {"beamkit": {"command": "uvx",
-  "args": ["--from", "git+https://github.com/oksuzian/beamkit@v0.3.1", "beamkit-mcp"]}}}
+  "args": ["--from", "git+https://github.com/oksuzian/beamkit@v0.4.0", "beamkit-mcp"]}}}
 ```
 
-or `pip install git+https://github.com/oksuzian/beamkit.git@v0.3.1` and
-`{"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}`.
+Without uv: `pip install git+https://github.com/oksuzian/beamkit.git@v0.4.0`
+and `{"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}`.
 
-**For NERSC jobs, either way:** a Superfacility API client in `~/.sfapi/`
-and a `nersc.toml`; five minutes, see [docs/nersc.md](docs/nersc.md).
+**On a Mu2e gpvm**, once: put uv's cache off nashome,
+`export UV_CACHE_DIR=/exp/mu2e/app/users/$USER/.uv-cache` in your shell
+profile. The Fermilab grid path spawns the prodtools MCP servers from
+`/cvmfs/mu2e.opensciencegrid.org/bin/prodtools/current`; set
+`BEAMKIT_PRODTOOLS_ROOT` in the server's `env` to use a checkout instead.
+
+**For NERSC jobs:** a Superfacility API client in `~/.sfapi/` and a
+`nersc.toml`; five minutes, see [docs/nersc.md](docs/nersc.md).
 
 Then ask in plain words:
 
@@ -50,9 +49,6 @@ until G4BeamlineScripts carries that parameter itself.
   two transports (IRI v2, Superfacility v1.2), `scripts/iri-ping`.
 - [docs/tools.md](docs/tools.md): every tool's signature, naming,
   records, `run_as` and privilege, recoveries, beam-file cuts.
-- [docs/cvmfs-release.md](docs/cvmfs-release.md): how a release gets
-  onto cvmfs and what the launcher does.
 - [docs/architecture.md](docs/architecture.md): modules and data flow.
-- [docs/developing.md](docs/developing.md): dev venv, test suite,
-  the prodtools contract test.
+- [docs/developing.md](docs/developing.md): dev venv, test suite, the prodtools contract test.
 - [docs/specs/](docs/specs/): the design documents.
