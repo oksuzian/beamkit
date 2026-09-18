@@ -14,10 +14,10 @@ where you start Claude Code, or to `~/.claude.json`:
 
 ```json
 {"mcpServers": {"beamkit": {"command": "uvx",
-  "args": ["--from", "git+https://github.com/oksuzian/beamkit@v0.4.0", "beamkit-mcp"]}}}
+  "args": ["--from", "git+https://github.com/oksuzian/beamkit@v0.5.0", "beamkit-mcp"]}}}
 ```
 
-Without uv: `pip install git+https://github.com/oksuzian/beamkit.git@v0.4.0`
+Without uv: `pip install git+https://github.com/oksuzian/beamkit.git@v0.5.0`
 and `{"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}`.
 
 **On a Mu2e gpvm**, once: put uv's cache off nashome,

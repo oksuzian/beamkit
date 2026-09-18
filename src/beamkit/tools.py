@@ -1,7 +1,8 @@
 """The beamkit tools; server.py registers them with FastMCP as they are, so
 every parameter is annotated and `run_as` has no default where a call
-writes. Orchestration only: naming, decks, compose, records do the work;
-bridge talks to prodtools. Every refusal is a BeamkitError."""
+writes. Orchestration only: load the record or build a RunRequest, then
+delegate to `runs.create` or `backends.get(site)` — the backend and the
+run-creation ritual do the work. Every refusal is a BeamkitError."""
 import sys
 from typing import Optional
 

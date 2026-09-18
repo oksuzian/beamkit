@@ -6,13 +6,17 @@ does not have for G4beamline: a reproducible pin of the deck, a name derived
 from that pin, an entry JSON composed from it, and a beam-file builder for
 the ntuples the run produces.
 
-Everything in `src/beamkit/` is one of four things: a rule (identity, naming,
-compose), a seam (bridge, server, iri), a store (paths, records), or a
-payload transformer (decks, beamfile, publishing, `_read_plane`,
-nersc_cnf, nersc_templates). `tools.py` orchestrates the Fermilab path
-directly and dispatches `site="nersc"` calls to `backends/nersc.py`,
-which orchestrates that path the same way (layout, submit, status)
-against `iri.py` instead of `bridge.py`.
+Everything in `src/beamkit/` is one of five things: a rule (identity,
+naming, compose), a ritual (`runs.py`, run creation), a seam (bridge,
+server, iri), a store (paths, records), or a payload transformer (decks,
+beamfile, publishing, `_read_plane`, nersc_cnf, nersc_templates).
+`tools.py` knows no site: every tool loads the record (or takes the
+caller's `site`), asks `backends.get(site)` for the backend, and
+delegates. `backends/fermilab.py` and `backends/nersc.py` are two peers
+of one interface (`docs/specs/2026-09-17-backend-seam-design.md` §6):
+each supplies `runs.create`'s eight hooks plus its own body for every
+other tool, the first driven through `bridge.py` against prodtools, the
+second through `iri.py` against the Superfacility API.
 
 ## The layers
 
@@ -24,7 +28,8 @@ graph TB
 
     subgraph beamkit["beamkit"]
         SRV["<b>server.py</b><br/>FastMCP wiring — registers tools.py's<br/>functions as they are. Imports mcp only<br/>inside create_mcp_server()."]
-        TOOLS["<b>tools.py</b><br/>The eight tools. Orchestration only:<br/>validate, dispatch on site, call the leaves in order."]
+        TOOLS["<b>tools.py</b><br/>The eight tools. Orchestration only:<br/>validate the site, build a RunRequest or<br/>load the record, delegate to backends.get(site)."]
+        RUNS["<b>runs.py</b><br/>Run creation, once (§5.2): validate, allocate<br/>the dsconf, save the record, enqueue, submit.<br/>The backend supplies eight hooks."]
 
         subgraph rules["Rules — pure, no I/O"]
             IDN["<b>identity.py</b><br/>what run_as means: owner, ledger,<br/>confirm, what may ship"]
@@ -41,13 +46,16 @@ graph TB
 
         subgraph store["State"]
             PTH["<b>paths.py</b><br/>$BEAMKIT_HOME layout"]
-            REC["<b>records.py</b><br/>runs/&lt;run_id&gt;/run.json —<br/>only what prodtools does not know"]
+            REC["<b>records.py</b><br/>runs/&lt;run_id&gt;/run.json —<br/>site + one typed block, an older<br/>shape refused by name"]
         end
 
-        BRG["<b>bridge.py</b><br/>the ONLY module that talks to prodtools:<br/>an MCP client of the two prodtools servers,<br/>spawned from BEAMKIT_PRODTOOLS_ROOT on the first Fermilab call."]
+        subgraph fermilab_backend["backends/fermilab.py"]
+            FL["<b>backends/fermilab.py</b><br/>runs.create's eight hooks, driven through<br/>bridge.py, plus the Fermilab body of every<br/>other tool (submit_run, make_recoveries,<br/>status, outputs, make_beamfile)"]
+            BRG["<b>bridge.py</b><br/>the ONLY module that talks to prodtools:<br/>an MCP client of the two prodtools servers,<br/>spawned from BEAMKIT_PRODTOOLS_ROOT on the first Fermilab call."]
+        end
 
-        subgraph nersc_backend["backends/ — the NERSC path"]
-            NB["<b>backends/nersc.py</b><br/>orchestrates layout, submit, status —<br/>the site=nersc mirror of tools.py"]
+        subgraph nersc_backend["backends/nersc.py"]
+            NB["<b>backends/nersc.py</b><br/>runs.create's eight hooks plus the NERSC<br/>body of every other tool (submit_run, status,<br/>outputs, make_beamfile), driven through the<br/>IRI Facility API"]
             NCFG["<b>nersc_config.py</b><br/>loads + validates $BEAMKIT_HOME/nersc.toml"]
             NCNF["<b>nersc_cnf.py</b><br/>builds the cnf tarball locally,<br/>jobpars shaped like json2jobdef's"]
             NTPL["<b>nersc_templates.py</b><br/>fills job.sh / inner.sh / beamfile.sh —<br/>carries prodtools' g4bl recipe, checked<br/>byte-equal by the contract probe"]
@@ -64,9 +72,15 @@ graph TB
     end
 
     MCP --> SRV --> TOOLS
-    TOOLS --> IDN & NAM & CMP & DEK & BF & PUB & REC & PTH
-    TOOLS --> BRG
-    TOOLS -->|site=nersc| NB
+    TOOLS --> IDN & REC & PTH & DEK
+    TOOLS -.->|get_server_info| BRG & NCFG
+    TOOLS --> RUNS
+    TOOLS -->|backends.get site| FL & NB
+    RUNS --> NAM & CMP & DEK & PTH & REC
+    RUNS -->|backends.get site| FL & NB
+    FL --> BF & PUB & CMP & IDN & NAM & PTH & REC
+    FL --> BRG
+    NB --> BF & IDN & NAM & PTH & REC
     NB --> NCFG & NCNF & NTPL & IRI
     PUB --> BRG
     BF -.->|subprocess| RP
@@ -98,12 +112,13 @@ prodtools servers that needs only `mcp`.
 | File | Purpose |
 | --- | --- |
 | `server.py` | FastMCP registration: a tuple of the nine tool names, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them, and each tool's description is the function's own docstring. The instructions spell the state vocabulary from `records.STATES`. |
-| `tools.py` | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, dispatches on `site` (`fermilab` through prodtools, `nersc` through `backends/nersc.py`), then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
+| `tools.py` | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `fetch_outputs`, `make_beamfile`, `get_server_info`. Validates the `site` argument where a tool takes one, builds a `RunRequest` (`run_beamline`, handed whole to `runs.create`) or loads the record from disk, then asks `backends.get(site)` for the backend and delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
+| `runs.py` | `RunRequest` and `create(req)`: the one creation ritual (spec §5.2) — resolve identity, validate the tag and the caller's inputs, let the backend validate and fill its own defaults, pin the deck, allocate the dsconf, claim the run dir, save the record, enqueue (annotating and re-raising on failure), check `njobs` against what the site reports, submit if asked. The only writer of `state="created"` and `"enqueue_failed"`; the site's part is the backend's eight hooks. |
 | `bridge.py` | MCP client of prodtools' write and read servers (`mcpclient.StdioServer` per child, lazy, kept for the process life). Converts every prodtools failure into `BridgeError`: isError text from the write server, the `{"error": ...}` envelope from the read server. Reads one environment variable, `BEAMKIT_PRODTOOLS_ROOT`; the dev checkout to ship arrives as an argument. |
 | `mcpclient.py` | A synchronous handle on one MCP server over stdio: private event loop in a daemon thread, one serve task for the session's life, stderr tail for start failures, respawn after a child dies. Knows nothing about prodtools. |
 | `beamfile.py` | The cut table (`bm`/`ps` presets or a custom `{keep_pdg, drop_pdg, min_p_mev}`), label and plane validation, the dedupe and structural cuts, and the atomic BLTrackFile writer. |
 | `decks.py` | Resolves a tag/branch/sha against the deck repo and materializes that commit once into a content-addressed cache. |
-| `records.py` | The `RunRecord` dataclass and its atomic save/load. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`, `partially_submitted`, `short`, `complete`. prodtools' ledger is the system of record for submission state on the Fermilab path; the last three states are NERSC-only, computed from Slurm and `out/` since there is no ledger there. |
+| `records.py` | The `RunRecord` dataclass — one typed site block (`backends.block_type(site)`) instead of Fermilab fields on every record and an untyped `nersc` dict — and its atomic save/load. `to_dict()` emits the block under the site's own key, `"fermilab"` or `"nersc"`, never both; `from_dict` refuses an older shape (a legacy top-level key, a `nersc` block without `site == "nersc"`, or no block at all), naming the file and the version instead of converting it. States: `enqueue_failed`, `created`, `submitted`, `needs_attention`, `partially_submitted`, `short`, `complete`. prodtools' ledger is the system of record for submission state on the Fermilab path; the last three states are NERSC-only, computed from Slurm and `out/` since there is no ledger there. |
 | `identity.py` | What `run_as` means: owner, `mine`, production, confirm requirement, default publish location, and whether a dev prodtools checkout may ship. The only reader of `BEAMKIT_PRODTOOLS_DIR`. |
 | `compose.py` | `validate_inputs`, the one rule for every caller-supplied value, and the single-entry JSON `json2jobdef` consumes. |
 | `naming.py` | Every Mu2e name beamkit produces: run id, cnf, nts dataset, beam-file artifact, and the `-NNN` suffix rule when a cnf name is already taken in SAM. |
@@ -115,8 +130,9 @@ prodtools servers that needs only `mcp`.
 | `nersc_cnf.py` | Builds the cnf tarball for a NERSC run on the caller's machine: the deck without VCS internals plus a `jobpars.json` in the shape prodtools' `json2jobdef._build_g4bl_tarball` writes, so a later harvest can declare it as the parent of every nts file unchanged. |
 | `nersc_templates.py` | Fills in the `@@NAME@@` placeholders of the files beamkit puts on a Perlmutter node; the g4bl lines are prodtools' `utils.runmu2e._g4bl_script` reproduced here because the NERSC path runs no prodtools on the node. |
 | `templates/` | The four rendered files: `job.sh` (enter the Mu2e EL9 image via apptainer), `inner.sh` (per-index g4bl run, log opened first so 128 tasks on one node never interleave), `beamfile.sh` (enter the image to build a beam file), `beamfile_job.py` (self-contained BLTrackFile writer, using uproot from the cvmfs ana environment). |
-| `backends/__init__.py` | `validate_site`: `fermilab` is the prodtools path in `tools.py`, `nersc` is `backends/nersc.py`. `tools.py` calls it once per tool invocation. |
-| `backends/nersc.py` | The NERSC backend: a run is a directory on CFS plus one Slurm job per slice of the run's own `slice_size` indices, driven through the IRI Facility API. Orchestrates layout, submit and status the way `tools.py` orchestrates the Fermilab path. Touches no SAM, dCache, prodtools or ledger. |
+| `backends/__init__.py` | `SITES` (`"fermilab"`, `"nersc"`); `get(site)`, which imports the named backend module on first use and refuses an unknown site; `block_type(site)` (`get(site).Block`), the late import `records.from_dict` uses so `records.py` names a block type without an import cycle. |
+| `backends/fermilab.py` | The Fermilab backend: `runs.create`'s eight hooks (`resolve_identity`, `validate`, `taken`, `retryable`, `new_block`, `enqueue`, `after_failure`, `submit`) plus the Fermilab body of every other tool (`submit_run`, `make_recoveries`, `status`, `outputs`, `make_beamfile`) and `available()`. `bridge.py` is reached from here, from `publishing.py`, and from `tools.py`'s own `get_server_info` probe — nowhere else imports it. |
+| `backends/nersc.py` | The NERSC backend: a run is a directory on CFS plus one Slurm job per slice of `procs_per_node` indices, driven through the IRI Facility API. Supplies the same eight hooks as `backends/fermilab.py` plus the NERSC body of every other tool. Touches no SAM, dCache, prodtools or ledger. |
 | `__init__.py` | Version and `BeamkitError`, the base of every error beamkit raises. |
 
 Line counts are not tracked here: they drift every time a fix lands and a
@@ -238,9 +254,18 @@ because on a large run that read is hours long.
 
 ## The rules that shaped it
 
+- **One ritual.** Run creation exists once, in `runs.create`; a site supplies
+  eight hooks (`resolve_identity`, `validate`, `taken`, `retryable`,
+  `new_block`, `enqueue`, `after_failure`, `submit`) and nothing else decides
+  the order. A refused call burns no dsconf and writes no record; the record
+  is saved before the first remote effect; an enqueue that fails leaves
+  `enqueue_failed` with the backend's own account of what it left behind.
 - **One import point.** Only `bridge.py` talks to prodtools, over MCP, so
   beamkit's interpreter carries none of prodtools' environment. This is what
-  lets the suite run anywhere.
+  lets the suite run anywhere. `bridge.py` itself is imported by
+  `backends/fermilab.py` (the campaign ritual), `publishing.py` (`push_file`),
+  and `tools.py` (`get_server_info`'s own availability probe) — nowhere else
+  needs prodtools directly.
 - **No fallbacks.** Validate at the boundary and fail loudly naming the cause.
   The one deliberate exception is `backends/nersc._nts_entries`, which reads a
   missing CFS `out/` (a run that failed before its remote layout was ever
