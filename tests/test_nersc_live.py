@@ -22,7 +22,7 @@ def _wait(run_id, done, minutes):
         if done(st):
             return st
         time.sleep(30)
-    pytest.fail(f"{run_id} not done after {minutes} min: {tools.beamline_status(run_id)['nersc']}")
+    pytest.fail(f"{run_id} not done after {minutes} min: {tools.beamline_status(run_id)['status']}")
 
 
 def test_two_indices_then_a_beam_file(beamkit_home):
@@ -39,8 +39,8 @@ def test_two_indices_then_a_beam_file(beamkit_home):
                              params={"epsMax": "0.01"}, walltime_s=1800)
     assert rec["state"] == "submitted" and len(rec["nersc"]["jobs"]) == 1
     st = _wait(rec["run_id"], lambda s: s["record"]["state"] in ("complete", "short"), 40)
-    assert st["record"]["state"] == "complete", st["nersc"]
-    assert st["nersc"]["outputs"] == {**st["nersc"]["outputs"], "expected": 2, "nts": 2, "logs": 2, "missing": []}
+    assert st["record"]["state"] == "complete", st["status"]
+    assert st["status"]["outputs"] == {**st["status"]["outputs"], "expected": 2, "nts": 2, "logs": 2, "missing": []}
     outs = tools.beamline_outputs(rec["run_id"])
     assert outs["n_files"] == 2 and all(f["size"] > 10_000 for f in outs["files"])
     log = iri.IriClient(cfg).download(f"{rec['nersc']['run_dir']}/out/log.{rec['owner']}.{tag}.{rec['dsconf']}.00000001.log")

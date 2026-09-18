@@ -336,7 +336,7 @@ def test_beamline_status_merges_record_and_campaign(fake_bridge):
     _run()
     out = tools.beamline_status("T.e470313")
     assert out["record"]["run_id"] == "T.e470313"
-    assert out["campaign"] == {"campaign_id": 7, "mine": True}
+    assert out["status"] == {"campaign_id": 7, "mine": True}
 
 
 def test_beamline_status_created_without_campaign(fake_bridge, monkeypatch):
@@ -344,7 +344,7 @@ def test_beamline_status_created_without_campaign(fake_bridge, monkeypatch):
     with pytest.raises(BeamkitError):
         _run()
     out = tools.beamline_status("T.e470313")
-    assert out["campaign"] is None and out["record"]["state"] == "enqueue_failed"
+    assert out["status"] is None and out["record"]["state"] == "enqueue_failed"
 
 
 def test_list_beamline_runs(fake_bridge):
@@ -470,21 +470,12 @@ def test_fermilab_site_refuses_a_walltime(fake_bridge):
     assert fake_bridge["push_cnf"] == []
 
 
-def test_submit_run_refuses_a_fermilab_record(fake_bridge, beamkit_home, tmp_path):
-    """submit_run is the NERSC backend's tool; a Fermilab record submits
-    through make_recoveries instead."""
+def test_submit_run_refuses_a_fermilab_record(fake_bridge):
+    """submit_run dispatches on rec.site; a Fermilab record reaches the
+    Fermilab backend's own refusal instead of the NERSC backend at all --
+    the Fermilab path submits through make_recoveries."""
     _run()
-    sfapi = tmp_path / "sfapi"
-    sfapi.mkdir()
-    (sfapi / "client_id").write_text("abcdefghijklm")
-    key = sfapi / "priv_key.pem"
-    key.write_text("-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n")
-    key.chmod(0o400)
-    beamkit_home.mkdir(parents=True, exist_ok=True)
-    (beamkit_home / "nersc.toml").write_text(
-        f'api = "https://api.iri.nersc.gov/api/v2"\nsfapi_dir = "{sfapi}"\naccount = "m4599"\n'
-        f'base_dir = "/global/cfs/cdirs/m4599/Users/u/beamkit"\nqos = "debug"\nowner = "u"\n')
-    with pytest.raises(BeamkitError, match="is a 'fermilab' run; submit_run is the NERSC backend's tool"):
+    with pytest.raises(BeamkitError, match="is a 'fermilab' run; the Fermilab path submits through make_recoveries"):
         tools.submit_run("T.e470313", "self")
 
 

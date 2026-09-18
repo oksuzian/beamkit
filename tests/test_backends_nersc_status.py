@@ -20,10 +20,10 @@ def test_status_while_running(fake):
     _land(fake, 0)
     st = tools.beamline_status("T.e470313")
     assert st["record"]["state"] == "submitted"
-    assert st["nersc"]["jobs"][0]["state"] == "active" and st["nersc"]["jobs"][0]["node"] == "nid004381"
-    assert st["nersc"]["outputs"] == {"expected": 3, "nts": 1, "logs": 1, "missing": [1, 2],
-                                      "nts_files": ["nts.u.T.e470313.00000000.root"]}
-    assert st["campaign"] is None
+    assert st["status"]["jobs"][0]["state"] == "active" and st["status"]["jobs"][0]["node"] == "nid004381"
+    assert st["status"]["outputs"] == {"expected": 3, "nts": 1, "logs": 1, "missing": [1, 2],
+                                       "nts_files": ["nts.u.T.e470313.00000000.root"]}
+    assert st["site"] == "nersc"
 
 
 def test_status_complete_when_terminal_and_all_nts(fake):
@@ -32,7 +32,7 @@ def test_status_complete_when_terminal_and_all_nts(fake):
     for i in range(3):
         _land(fake, i)
     st = tools.beamline_status("T.e470313")
-    assert st["record"]["state"] == "complete" and st["nersc"]["outputs"]["missing"] == []
+    assert st["record"]["state"] == "complete" and st["status"]["outputs"]["missing"] == []
     assert tools.list_beamline_runs(state="complete")["count"] == 1
 
 
@@ -43,8 +43,8 @@ def test_status_short_when_terminal_and_nts_missing(fake):
     _land(fake, 0)
     _land(fake, 1, with_nts=False)
     st = tools.beamline_status("T.e470313")
-    assert st["record"]["state"] == "short" and st["nersc"]["outputs"]["missing"] == [1, 2]
-    assert st["nersc"]["jobs"][0]["exit_code"] == 1
+    assert st["record"]["state"] == "short" and st["status"]["outputs"]["missing"] == [1, 2]
+    assert st["status"]["jobs"][0]["exit_code"] == 1
 
 
 def test_missing_list_is_capped_at_50(fake):
@@ -52,14 +52,14 @@ def test_missing_list_is_capped_at_50(fake):
     for j in fake.jobs.values():
         j["state"] = "completed"
     st = tools.beamline_status("T.e470313")
-    assert len(st["nersc"]["outputs"]["missing"]) == 50 and st["nersc"]["outputs"]["nts"] == 0
+    assert len(st["status"]["outputs"]["missing"]) == 50 and st["status"]["outputs"]["nts"] == 0
 
 
 def test_status_of_a_created_run_asks_nothing_of_slurm(fake):
     _run(njobs=3, submit=False)
     n = len(fake.calls)
     st = tools.beamline_status("T.e470313")
-    assert st["record"]["state"] == "created" and st["nersc"]["jobs"] == []
+    assert st["record"]["state"] == "created" and st["status"]["jobs"] == []
     assert all("/compute/status/" not in c[1] for c in fake.calls[n:])
 
 

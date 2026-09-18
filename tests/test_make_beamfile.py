@@ -34,7 +34,7 @@ def fake(monkeypatch):
         Path(out_path).write_text("".join(beamfile.HEADER) + "row\n")
         return {"rows_in": 10, "rows_out": 1, "dropped": dict.fromkeys(beamfile.DROP_KEYS, 0),
                 "sha256": "s" * 64, "size": Path(out_path).stat().st_size}
-    monkeypatch.setattr(tools.beamfile, "build", fake_build)
+    monkeypatch.setattr(fermilab.beamfile, "build", fake_build)
     def push_file(path, location, parents, run_as, confirm):
         calls["push_file"].append(dict(path=str(path), location=location, parents=list(parents), run_as=run_as, confirm=confirm))
         return {"name": Path(path).name}
@@ -143,7 +143,7 @@ def test_publish_without_push_file_refused_before_any_read_or_build(fake, monkey
     monkeypatch.setattr(tools.bridge, "push_file_available", lambda: False)
     monkeypatch.setattr(tools.bridge, "dataset_files",
                         lambda ds, loc: (_ for _ in ()).throw(AssertionError("read the dataset")))
-    monkeypatch.setattr(tools.beamfile, "build",
+    monkeypatch.setattr(fermilab.beamfile, "build",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("built the beam file")))
     with pytest.raises(BeamkitError, match="publish=False"):
         tools.make_beamfile("T.e470313", "bm", "self", publish=True)

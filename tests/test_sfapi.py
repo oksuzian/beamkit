@@ -207,7 +207,7 @@ def test_backend_end_to_end_on_sfapi(sfapi_fake):
     assert "epsMax='0.01'" in fake.files[RD + "/inner.sh"].decode() or "epsMax=0.01" in fake.files[RD + "/inner.sh"].decode()
 
     st = tools.beamline_status("T.e470313")
-    assert [j["state"] for j in st["nersc"]["jobs"]] == ["queued"] * 3 and st["record"]["state"] == "submitted"
+    assert [j["state"] for j in st["status"]["jobs"]] == ["queued"] * 3 and st["record"]["state"] == "submitted"
 
     for j in jobs:
         fake.jobs[j["slurm_id"]].update(state="COMPLETED", exit_code=0)
@@ -217,8 +217,8 @@ def test_backend_end_to_end_on_sfapi(sfapi_fake):
         if idx != 7:
             fake.files[f"{RD}/out/nts.u.T.e470313.{seq}.root"] = b"r" * (100 + idx)
     st = tools.beamline_status("T.e470313")
-    assert st["record"]["state"] == "short" and st["nersc"]["outputs"]["missing"] == [7]
-    assert st["nersc"]["jobs"][0]["node"] == "nid004381"
+    assert st["record"]["state"] == "short" and st["status"]["outputs"]["missing"] == [7]
+    assert st["status"]["jobs"][0]["node"] == "nid004381"
     fake.files[f"{RD}/out/nts.u.T.e470313.{7:08d}.root"] = b"r"
     assert tools.beamline_status("T.e470313")["record"]["state"] == "complete"
     out = tools.beamline_outputs("T.e470313")

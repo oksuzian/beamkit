@@ -93,6 +93,16 @@ def config():
     return _entry()[0]
 
 
+def available() -> tuple:
+    """nersc.toml present and valid; the detail names account, base_dir, owner."""
+    cfg_path = nersc_config.config_path(paths.home())
+    try:
+        cfg = config()
+    except BeamkitError as e:
+        return False, f"{cfg_path}: {e}"
+    return True, f"account {cfg.account}, base_dir {cfg.base_dir}, owner {cfg.owner} ({cfg_path})"
+
+
 def _cfg_client():
     """(config, client): one client per config, so the session and its
     token outlive the tool call that created them."""
@@ -228,14 +238,11 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
     return rec.to_dict()
 
 
-def submit_run(run_id, run_as) -> dict:
+def submit_run(rec, run_as) -> dict:
     cfg, client = _cfg_client()
     identity.resolve(run_as, site="nersc", owner=cfg.owner)
     runs_dir = paths.runs_dir()
-    rec = records.load(run_id, runs_dir)
-    if rec.site != "nersc":
-        raise BeamkitError(f"run {run_id} is a {rec.site!r} run; submit_run is the NERSC backend's tool "
-                           f"(the Fermilab path submits through make_recoveries)")
+    run_id = rec.run_id
     if rec.state not in SUBMITTABLE:
         raise BeamkitError(f"run {run_id} is in state {rec.state!r}; submit_run applies to {SUBMITTABLE}")
     rd = rec.block.run_dir
@@ -244,6 +251,11 @@ def submit_run(run_id, run_as) -> dict:
                            f"run run_beamline again")
     _submit_missing(rec, cfg, client, runs_dir)
     return rec.to_dict()
+
+
+def make_recoveries(rec, run_as, confirm) -> dict:
+    raise BeamkitError(f"run {rec.run_id}: no recovery on nersc; submit a new run (beamline_status reports "
+                       f"the missing indices)")
 
 
 def _nts_entries(client, rec) -> tuple:
@@ -378,9 +390,11 @@ def beamfile_duration(n_nts) -> int:
     return min(BEAMFILE_WALLTIME_CAP, 600 + 2 * int(n_nts))
 
 
-def make_beamfile(*, rec, flavor, run_as, plane, cuts, label, publish) -> dict:
+def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location, confirm) -> dict:
     cfg, client = _cfg_client()
     identity.resolve(run_as, site="nersc", owner=cfg.owner)
+    if location is not None:
+        raise BeamkitError("location applies to site='fermilab' publishing only")
     if publish:
         raise BeamkitError("publish=True on a NERSC run: publishing is part of harvest, which runs at Fermilab; "
                            "build with publish=False")
