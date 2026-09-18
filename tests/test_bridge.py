@@ -40,16 +40,23 @@ def test_availability_needs_both_launchers(fake_prodtools_root):
     assert ok is False and "start_mcp.sh" in detail
 
 
+def _entry_json(tmp_path, njobs=3):
+    path = tmp_path / "entry.json"
+    path.write_text(json.dumps([{"njobs": njobs}]))
+    return path
+
+
 def test_push_cnf_forwards_as_keywords(fake_prodtools_root, tmp_path):
-    out = bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False)
-    assert out["campaign_id"] == 7 and out["tarball"] == "cnf.u.T.e470313.0.tar"
+    entry = _entry_json(tmp_path)
+    out = bridge.push_cnf(entry, "T", "e470313", 3, "self", False)
+    assert out["campaign_id"] == 7 and out["tarball"] == "cnf.u.T.e470313.0.tar" and out["njobs"] == 3
     assert calls(fake_prodtools_root)[-1] == {
-        "tool": "push_cnf", "args": {"json": str(tmp_path / "entry.json"), "desc": "T", "dsconf": "e470313",
+        "tool": "push_cnf", "args": {"json": str(entry), "desc": "T", "dsconf": "e470313",
                                      "slice_size": 3, "run_as": "self", "confirm": False}}
 
 
 def test_push_cnf_forwards_an_explicit_dev_dir(fake_prodtools_root, tmp_path):
-    bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False,
+    bridge.push_cnf(_entry_json(tmp_path), "T", "e470313", 3, "self", False,
                     prodtools_dir="/exp/mu2e/app/users/u/prodtools")
     assert calls(fake_prodtools_root)[-1]["args"]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
 
@@ -58,7 +65,7 @@ def test_push_cnf_sends_no_prodtools_dir_keyword_for_the_release(fake_prodtools_
     """None means the cvmfs release: the keyword is absent, not None, and the
     environment is not consulted here -- identity reads it, once."""
     monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/exp/mu2e/app/users/u/prodtools")
-    bridge.push_cnf(tmp_path / "entry.json", "T", "e470313", 3, "self", False)
+    bridge.push_cnf(_entry_json(tmp_path), "T", "e470313", 3, "self", False)
     assert "prodtools_dir" not in calls(fake_prodtools_root)[-1]["args"]
 
 
@@ -116,7 +123,9 @@ def test_campaigns_is_the_ledger_only_listing(fake_prodtools_root):
     assert calls(fake_prodtools_root)[-1]["args"] == {"state": None, "mine": True}
 
 
-def test_cnf_exists(fake_prodtools_root):
+def test_cnf_exists(fake_prodtools_root, monkeypatch):
+    monkeypatch.setenv("FAKE_PRODTOOLS_CNF_EXISTS", "cnf.u.T.e470313.0.tar")
+    bridge.reset()
     assert bridge.cnf_exists("cnf.u.T.e470313.0.tar") is True
     assert bridge.cnf_exists("cnf.u.T.e470313-001.0.tar") is False
 
@@ -165,6 +174,7 @@ def test_children_are_lazy_and_reused(fake_prodtools_root):
 
 def test_child_death_respawns_on_the_next_call(fake_prodtools_root, monkeypatch):
     monkeypatch.setenv("FAKE_PRODTOOLS_DIE", "list_campaigns")
+    monkeypatch.setenv("FAKE_PRODTOOLS_CNF_EXISTS", "cnf.u.T.e470313.0.tar")
     bridge.reset()
     with pytest.raises(bridge.BridgeError, match="exited during list_campaigns"):
         bridge.campaigns(mine=True)

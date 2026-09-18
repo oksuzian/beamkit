@@ -6,10 +6,11 @@ Task 2). The read role envelopes failures as {"error": {...}} the way
 prodtools' safe_tool does; the write role raises, as prodtools-write does.
 """
 import functools
-import json
+import json as jsonlib
 import os
 import sys
 import time
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -18,7 +19,7 @@ def _record(tool, args):
     path = os.environ.get("FAKE_PRODTOOLS_CALLS")
     if path:
         with open(path, "a") as fh:
-            fh.write(json.dumps({"tool": tool, "args": args}) + "\n")
+            fh.write(jsonlib.dumps({"tool": tool, "args": args}) + "\n")
 
 
 def _trip(tool):
@@ -26,7 +27,7 @@ def _trip(tool):
         sys.stderr.write(f"fake prodtools: dying inside {tool}\n")
         sys.stderr.flush()
         os._exit(7)
-    if os.environ.get("FAKE_PRODTOOLS_FAIL") == tool:
+    if tool in filter(None, os.environ.get("FAKE_PRODTOOLS_FAIL", "").split(",")):
         raise RuntimeError(f"{tool} refused by the fake; remedy: try the other thing")
 
 
@@ -51,14 +52,17 @@ def push_cnf(json: str, desc: str, dsconf: str, slice_size: int, run_as: str,
         args["prodtools_dir"] = prodtools_dir
     _record("push_cnf", args)
     _trip("push_cnf")
+    njobs = jsonlib.loads(open(json).read())[0]["njobs"]
     return {"tarball": f"cnf.u.{desc}.{dsconf}.0.tar", "datasets": ["nts.*.root"],
-            "campaign_id": 7, "njobs": 3}
+            "campaign_id": 7, "njobs": njobs}
 
 
-def run_submissions(run_as: str, campaign_id: int = None, confirm: bool = False):
+def run_submissions(run_as: str, campaign_id: Optional[int] = None, confirm: bool = False):
     _record("run_submissions", {"run_as": run_as, "campaign_id": campaign_id, "confirm": confirm})
     _trip("run_submissions")
-    return {"rc": 0, "needs_attention": False, "campaign_id": campaign_id, "output": "tick ok"}
+    out = {"rc": 0, "needs_attention": False, "campaign_id": campaign_id, "output": "tick ok"}
+    out.update(jsonlib.loads(os.environ.get("FAKE_PRODTOOLS_TICK") or "{}"))
+    return out
 
 
 def push_file(path: str, location: str, parents: list, run_as: str, confirm: bool = False):
@@ -96,8 +100,10 @@ def list_campaigns(state: str = None, mine: bool = False) -> dict:
     _trip("list_campaigns")
     if _shape("list_campaigns"):
         return {"unexpected": 1}
-    return {"count": 1, "db_path": "/db", "called": {"state": state, "mine": mine},
-            "campaigns": [{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]}
+    campaigns = jsonlib.loads(os.environ.get("FAKE_PRODTOOLS_CAMPAIGNS") or
+                              '[{"id": 7, "state": "complete", "tarball": "cnf.u.T.e470313.0.tar"}]')
+    return {"count": len(campaigns), "db_path": "/db", "called": {"state": state, "mine": mine},
+            "campaigns": campaigns}
 
 
 @_safe
@@ -106,7 +112,7 @@ def locate_file(name: str) -> dict:
     _trip("locate_file")
     if _shape("locate_file"):
         return {"unexpected": 1}
-    exists = name.endswith("e470313.0.tar")
+    exists = name in filter(None, os.environ.get("FAKE_PRODTOOLS_CNF_EXISTS", "").split(","))
     return {"name": name, "exists": exists, "locations": ["enstore:/x"] if exists else []}
 
 
@@ -120,7 +126,7 @@ def dataset_files(dataset: str, location: str) -> dict:
         return _envelope("invalid_argument", f"unknown dataset location {location!r} for {dataset}",
                          "Use one of scratch, disk, tape.")
     root = f"/pnfs/{location}/{dataset}"
-    listed = json.loads(os.environ.get("FAKE_PRODTOOLS_FILES") or
+    listed = jsonlib.loads(os.environ.get("FAKE_PRODTOOLS_FILES") or
                         '[["nts.u.T.e470313.00000002.root", 20], ["nts.u.T.e470313.00000000.root", 10]]')
     files = [{"name": n, "size": s, "path": f"{root}/aa/bb/{n}"} for n, s in sorted(listed)]
     return {"dataset": dataset, "location": location, "root": root, "n_files": len(files),

@@ -74,9 +74,13 @@ def test_start_lists_tools_and_call_returns_the_dict(write):
     assert out == {"rc": 0, "needs_attention": False, "campaign_id": 7, "output": "tick ok"}
 
 
-def test_call_starts_lazily(read):
-    out = read.call("locate_file", name="cnf.u.T.e470313.0.tar")
-    assert read.started and out["exists"] is True
+def test_call_starts_lazily():
+    s = fake("read", FAKE_PRODTOOLS_CNF_EXISTS="cnf.u.T.e470313.0.tar")
+    try:
+        out = s.call("locate_file", name="cnf.u.T.e470313.0.tar")
+        assert s.started and out["exists"] is True
+    finally:
+        s.close()
 
 
 def test_child_gets_the_parents_environment():

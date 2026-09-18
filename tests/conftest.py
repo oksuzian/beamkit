@@ -32,7 +32,8 @@ def fake_prodtools_root(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_PRODTOOLS_CALLS", str(tmp_path / "calls.jsonl"))
     for var in ("FAKE_PRODTOOLS_FAIL", "FAKE_PRODTOOLS_DIE", "FAKE_PRODTOOLS_OMIT",
                 "FAKE_PRODTOOLS_NO_START", "FAKE_PRODTOOLS_HANG_START", "FAKE_PRODTOOLS_FILES",
-                "FAKE_PRODTOOLS_SHAPE"):
+                "FAKE_PRODTOOLS_SHAPE", "FAKE_PRODTOOLS_CNF_EXISTS", "FAKE_PRODTOOLS_CAMPAIGNS",
+                "FAKE_PRODTOOLS_TICK"):
         monkeypatch.delenv(var, raising=False)
     bridge.reset()
     yield tmp_path / "prodtools"
