@@ -56,9 +56,6 @@ class RunRecord:
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunRecord":
-        d = dict(d)
-        d.setdefault("site", "fermilab")
-        d.setdefault("nersc", {})
         return cls(**d)
 
 
@@ -66,14 +63,20 @@ def run_dir(runs_dir, run_id) -> Path:
     return Path(runs_dir) / run_id
 
 
+def atomic_write_text(path, text) -> Path:
+    """Write through <path>.part and rename, so a reader never sees a
+    half-written file and a crash leaves the old one intact."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".part")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+    return path
+
+
 def save(rec: RunRecord, runs_dir) -> Path:
     d = run_dir(runs_dir, rec.run_id)
     d.mkdir(parents=True, exist_ok=True)
-    out = d / "run.json"
-    tmp = d / "run.json.part"
-    tmp.write_text(json.dumps(rec.to_dict(), indent=2) + "\n")
-    os.replace(tmp, out)
-    return out
+    return atomic_write_text(d / "run.json", json.dumps(rec.to_dict(), indent=2) + "\n")
 
 
 def load(run_id, runs_dir) -> RunRecord:
@@ -81,6 +84,27 @@ def load(run_id, runs_dir) -> RunRecord:
     if not p.is_file():
         raise RecordError(f"no run record for {run_id!r} at {p}")
     return RunRecord.from_dict(json.loads(p.read_text()))
+
+
+def try_load(run_id, runs_dir) -> RunRecord | None:
+    """The record, or None when there is none to read: for the callers that
+    ask a question about a run dir rather than open one."""
+    try:
+        return load(run_id, runs_dir)
+    except RecordError:
+        return None
+
+
+def claim_run_dir(runs_dir, run_id, retryable) -> Path:
+    """The local run dir of a new run, created. A run id is never reused, so
+    an existing dir is refused unless `retryable(run_id, runs_dir)` says the
+    previous attempt created nothing anywhere else and may be overwritten
+    in place."""
+    d = run_dir(runs_dir, run_id)
+    if d.exists() and not retryable(run_id, runs_dir):
+        raise BeamkitError(f"run dir {d} already exists; a run id is never reused")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def list_runs(runs_dir, state=None) -> list[RunRecord]:

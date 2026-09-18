@@ -6,7 +6,8 @@ import math
 import os
 from pathlib import Path
 
-from beamkit import BeamkitError
+from beamkit import (BeamkitError, __version__, beamfile, compose, decks, identity, iri, naming,
+                     nersc_cnf, nersc_config, nersc_templates, paths, records)
 
 WALLTIME_DEFAULT = 172800
 CUSTOM_ATTRIBUTES = {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}
@@ -53,15 +54,41 @@ def job_spec(cfg, *, run_id, run_dir, offset, count, duration) -> dict:
     }
 
 
-from beamkit import (__version__, compose, decks, identity, iri, naming, nersc_cnf, nersc_config,
-                     nersc_templates, paths, records)
-
 def make_client(cfg):
     """The transport named in nersc.toml; both expose the same methods."""
     if cfg.transport == "sfapi":
         from beamkit import sfapi
         return sfapi.SfapiClient(cfg)
     return iri.IriClient(cfg)
+
+
+_CACHE = {}          # (nersc.toml path, mtime) -> [cfg, client or None]
+
+
+def _entry() -> list:
+    """nersc.toml as loaded, kept per (path, mtime): repeated tool calls in
+    one server process re-read no config. A different BEAMKIT_HOME, or an
+    edited file, is a miss."""
+    home = paths.home()
+    path = nersc_config.config_path(home)
+    key = (str(path), path.stat().st_mtime_ns) if path.is_file() else None
+    if key not in _CACHE:
+        _CACHE[key] = [nersc_config.load(home), None]      # a missing file is refused here
+    return _CACHE[key]
+
+
+def config():
+    """The config alone, for the refusals that come before any client exists."""
+    return _entry()[0]
+
+
+def _cfg_client():
+    """(config, client): one client per config, so the session and its
+    token outlive the tool call that created them."""
+    entry = _entry()
+    if entry[1] is None:
+        entry[1] = make_client(entry[0])
+    return entry[0], entry[1]
 
 
 SUBMITTABLE = ("created", "partially_submitted")
@@ -83,11 +110,9 @@ def _taken(cfg, client, tag):
 
 
 def _retryable(run_id, runs_dir) -> bool:
-    try:
-        rec = records.load(run_id, runs_dir)
-    except records.RecordError:
-        return False
-    return rec.site == "nersc" and rec.state == "enqueue_failed" and not rec.nersc.get("jobs")
+    rec = records.try_load(run_id, runs_dir)
+    return bool(rec and rec.site == "nersc" and rec.state == "enqueue_failed"
+                and not rec.nersc.get("jobs"))
 
 
 def _remote_layout(cfg, client, rd, uploads):
@@ -137,7 +162,7 @@ def _submit_missing(rec, cfg, client, runs_dir):
 
 def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_input, outloc, dsconf,
                  submit, deck_dir, deck_url, walltime_s) -> dict:
-    cfg = nersc_config.load(paths.home())
+    cfg = config()
     ident = identity.resolve(run_as, site="nersc", owner=cfg.owner)
     naming.validate_tag(tag)
     params = compose.validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc="scratch", params=params)
@@ -146,9 +171,7 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
                            f"pass outloc='scratch' (the default) or omit it")
     validate_walltime(walltime_s)
     pin = decks.pin(deck_ref, deck_dir, deck_url, paths.decks_dir(), ident.production)
-    if not (Path(pin.dir) / main_input).is_file():
-        raise BeamkitError(f"main_input {main_input!r} not found in deck dir {pin.dir}")
-    client = make_client(cfg)
+    cfg, client = _cfg_client()
     runs_dir = paths.runs_dir()
     # A retry after a failure that already created the remote run dir (e.g. a
     # transient upload error) must reuse that dsconf outright: probing the
@@ -162,10 +185,7 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
         dsconf = naming.allocate_dsconf(ident.owner, tag, naming.dsconf_base(pin.sha), _taken(cfg, client, tag),
                                         explicit=dsconf)
     run_id = naming.run_id(tag, dsconf)
-    rdir = records.run_dir(runs_dir, run_id)
-    if rdir.exists() and not _retryable(run_id, runs_dir):
-        raise BeamkitError(f"run dir {rdir} already exists; a run id is never reused")
-    rdir.mkdir(parents=True, exist_ok=True)
+    rdir = records.claim_run_dir(runs_dir, run_id, _retryable)
     rd = run_dir(cfg, run_id)
     cnf_name = naming.cnf_name(ident.owner, tag, dsconf)
     rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=ident.owner, run_as=run_as,
@@ -199,7 +219,7 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
 
 
 def submit_run(run_id, run_as) -> dict:
-    cfg = nersc_config.load(paths.home())
+    cfg, client = _cfg_client()
     identity.resolve(run_as, site="nersc", owner=cfg.owner)
     runs_dir = paths.runs_dir()
     rec = records.load(run_id, runs_dir)
@@ -208,7 +228,6 @@ def submit_run(run_id, run_as) -> dict:
                            f"(the Fermilab path submits through make_recoveries)")
     if rec.state not in SUBMITTABLE:
         raise BeamkitError(f"run {run_id} is in state {rec.state!r}; submit_run applies to {SUBMITTABLE}")
-    client = make_client(cfg)
     rd = rec.nersc["run_dir"]
     if not client.exists(f"{rd}/inner.sh"):
         raise BeamkitError(f"run {run_id}: remote layout at {rd} is missing inner.sh (job.sh cannot run); "
@@ -217,39 +236,36 @@ def submit_run(run_id, run_as) -> dict:
     return rec.to_dict()
 
 
-def _nts_index(name, rec):
-    prefix = f"nts.{rec.owner}.{rec.tag}.{rec.dsconf}."
-    base = name.rsplit("/", 1)[-1]
-    if base.startswith(prefix) and base.endswith(".root"):
-        seq = base[len(prefix):-5]
-        if seq.isdigit():
-            return int(seq)
-    return None
+def _nts_entries(client, rec) -> tuple:
+    """One ls of out/: the run's nts files by job index, and how many logs
+    sit beside them. A run that failed before its remote layout was ever
+    created (e.g. the cnf itself exceeded the upload cap) has no out/ dir
+    yet -- that is zero files, not an error, same as client.exists()."""
+    rd = rec.nersc["run_dir"]
+    try:
+        entries = client.ls(f"{rd}/out")
+    except iri.IriError as e:
+        if "No such file" not in (e.detail or str(e)):
+            raise
+        entries = []
+    files, logs = [], 0
+    for e in entries:
+        name = e["name"].rsplit("/", 1)[-1]
+        index = naming.nts_index(name, rec.owner, rec.tag, rec.dsconf)
+        if index is not None:
+            files.append({"name": name, "index": index, "size": int(e["size"]),
+                          "path": f"{rd}/out/{name}"})
+        elif name.startswith(f"log.{rec.owner}.{rec.tag}.{rec.dsconf}."):
+            logs += 1
+    files.sort(key=lambda f: f["index"])
+    return files, logs
 
 
 def out_counts(client, rec) -> dict:
-    """A run that failed before its remote layout was ever created (e.g.
-    the cnf itself exceeded the upload cap) has no out/ dir yet -- that is
-    zero files, not an error, same as client.exists() treats it."""
-    try:
-        entries = client.ls(f"{rec.nersc['run_dir']}/out")
-    except iri.IriError as e:
-        if "No such file" in (e.detail or str(e)):
-            entries = []
-        else:
-            raise
-    nts = {}
-    logs = 0
-    for e in entries:
-        base = e["name"].rsplit("/", 1)[-1]
-        idx = _nts_index(base, rec)
-        if idx is not None:
-            nts[idx] = e
-        elif base.startswith(f"log.{rec.owner}.{rec.tag}.{rec.dsconf}."):
-            logs += 1
-    missing = sorted(set(range(rec.njobs)) - set(nts))
-    return {"expected": rec.njobs, "nts": len(nts), "logs": logs, "missing": missing[:MISSING_CAP],
-            "nts_files": [nts[i]["name"].rsplit("/", 1)[-1] for i in sorted(nts)]}
+    files, logs = _nts_entries(client, rec)
+    missing = sorted(set(range(rec.njobs)) - {f["index"] for f in files})
+    return {"expected": rec.njobs, "nts": len(files), "logs": logs, "missing": missing[:MISSING_CAP],
+            "nts_files": [f["name"] for f in files]}
 
 
 def _job_status(client, job):
@@ -264,8 +280,7 @@ def status(rec) -> dict:
     """Slurm state per job and one ls of out/. Sets the run state:
     complete / short once every job is terminal, submitted otherwise.
     created and partially_submitted are left as they are."""
-    cfg = nersc_config.load(paths.home())
-    client = make_client(cfg)
+    cfg, client = _cfg_client()
     jobs = [_job_status(client, j) for j in rec.nersc.get("jobs", [])]
     outs = out_counts(client, rec)
     if rec.state in ("submitted", "short", "complete") and jobs:
@@ -279,16 +294,10 @@ def status(rec) -> dict:
 
 
 def outputs(rec) -> dict:
-    cfg = nersc_config.load(paths.home())
-    client = make_client(cfg)
+    """A run with no out/ dir on CFS yet has no outputs, not an error."""
+    cfg, client = _cfg_client()
     rd = rec.nersc["run_dir"]
-    files = []
-    for e in client.ls(f"{rd}/out"):
-        idx = _nts_index(e["name"], rec)
-        if idx is not None:
-            name = e["name"].rsplit("/", 1)[-1]
-            files.append({"name": name, "index": idx, "size": int(e["size"]), "path": f"{rd}/out/{name}"})
-    files.sort(key=lambda f: f["index"])
+    files, _ = _nts_entries(client, rec)
     return {"run_id": rec.run_id, "run_dir": rd, "n_files": len(files),
             "total_size": sum(f["size"] for f in files), "files": files, "beamfiles": list(rec.beamfiles)}
 
@@ -321,8 +330,7 @@ def fetch_outputs(rec, dest, kind) -> dict:
     to a temporary name and renamed once its size matches CFS."""
     if kind not in FETCH_KINDS:
         raise BeamkitError(f"kind must be one of {FETCH_KINDS}, got {kind!r}")
-    cfg = nersc_config.load(paths.home())
-    client = make_client(cfg)
+    cfg, client = _cfg_client()
     files = _fetch_list(client, rec, kind)
     big = [f for f in files if f["size"] > iri.DOWNLOAD_MAX]
     if big:
@@ -353,8 +361,6 @@ def fetch_outputs(rec, dest, kind) -> dict:
             "files": files}
 
 
-from beamkit import beamfile
-
 BEAMFILE_WALLTIME_CAP = 4 * 3600
 
 
@@ -362,8 +368,8 @@ def beamfile_duration(n_nts) -> int:
     return min(BEAMFILE_WALLTIME_CAP, 600 + 2 * int(n_nts))
 
 
-def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dict:
-    cfg = nersc_config.load(paths.home())
+def make_beamfile(*, rec, flavor, run_as, plane, cuts, label, publish) -> dict:
+    cfg, client = _cfg_client()
     identity.resolve(run_as, site="nersc", owner=cfg.owner)
     if publish:
         raise BeamkitError("publish=True on a NERSC run: publishing is part of harvest, which runs at Fermilab; "
@@ -372,14 +378,10 @@ def make_beamfile(*, run_id, flavor, run_as, plane, cuts, label, publish) -> dic
     resolved = beamfile.resolve_cuts(flavor, cuts)
     beamfile.validate_label(label)
     beamfile.validate_plane(plane)
-    runs_dir = paths.runs_dir()
-    rec = records.load(run_id, runs_dir)
-    if rec.site != "nersc":
-        raise BeamkitError(f"run {run_id} is a {rec.site!r} run; pass site={rec.site!r}")
+    run_id, runs_dir = rec.run_id, paths.runs_dir()
     if any(b["label"] == label for b in rec.beamfiles):
         raise BeamkitError(f"run {run_id}: label {label!r} is already spent by a submitted beam-file job; "
                            f"a beam file is never overwritten (pick another label)")
-    client = make_client(cfg)
     counts = out_counts(client, rec)
     if counts["nts"] == 0:
         raise BeamkitError(f"run {run_id}: 0 of {counts['expected']} nts files on CFS "

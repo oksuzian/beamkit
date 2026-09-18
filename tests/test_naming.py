@@ -68,3 +68,15 @@ def test_every_name_beamkit_produces_lives_here():
     assert naming.dataset("oksuzian", "MuBeam", "e470313") == "nts.oksuzian.MuBeam.e470313.root"
     assert naming.beamfile_name("mu2e", "MuBeam", "bm", "e470313") == "etc.mu2e.MuBeamBeam-bm.e470313.0.txt"
     assert naming.cnf_name("mu2e", "MuBeam", "e470313") == "cnf.mu2e.MuBeam.e470313.0.tar"
+
+
+def test_nts_index_reads_this_runs_sequencer_only():
+    args = ("u", "T", "e470313")
+    assert naming.nts_prefix(*args) == "nts.u.T.e470313."
+    assert naming.nts_index("nts.u.T.e470313.00000012.root", *args) == 12
+    assert naming.nts_index("/global/cfs/x/out/nts.u.T.e470313.00000000.root", *args) == 0
+    for other in ("nts.u.T.e470313.001430_00000052.root",      # composite sequencer
+                  "nts.u.T.other.00000001.root",                # another run
+                  "log.u.T.e470313.00000001.log",               # not an nts file
+                  "nts.u.T.e470313.00000001.art"):
+        assert naming.nts_index(other, *args) is None

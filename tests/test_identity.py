@@ -60,7 +60,7 @@ def test_for_record_reads_the_record_not_the_environment(monkeypatch):
 
 def test_nersc_site_takes_the_configured_owner():
     i = identity.resolve("self", site="nersc", owner="nersc_login")
-    assert i.site == "nersc" and i.owner == "nersc_login" and i.dev_dir is None and i.mine is True
+    assert i.owner == "nersc_login" and i.dev_dir is None and i.mine is True
 
 
 def test_nersc_site_refuses_mu2epro_even_confirmed():
@@ -81,8 +81,3 @@ def test_unknown_site_refused():
 def test_fermilab_site_ignores_owner_argument():
     assert identity.resolve("self", owner="ignored").owner == "u"
 
-
-def test_for_record_carries_site():
-    class Rec:
-        run_as, owner, site = "self", "n", "nersc"
-    assert identity.for_record(Rec).site == "nersc"

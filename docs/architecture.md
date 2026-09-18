@@ -97,7 +97,7 @@ prodtools servers that needs only `mcp`.
 
 | File | Purpose |
 | --- | --- |
-| `server.py` | FastMCP registration: a name→description table registering all eight tools, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them. |
+| `server.py` | FastMCP registration: a tuple of the nine tool names, each `tools.py` function registered as it is. tools.py annotates every parameter, because the schema is built from them, and each tool's description is the function's own docstring. The instructions spell the state vocabulary from `records.STATES`. |
 | `tools.py` | `run_beamline`, `make_recoveries`, `submit_run`, `beamline_status`, `list_beamline_runs`, `beamline_outputs`, `make_beamfile`, `get_server_info`. Resolves the identity and validates every input first, dispatches on `site` (`fermilab` through prodtools, `nersc` through `backends/nersc.py`), then delegates. Raises `BeamkitError` for its own refusals and lets each module's subclass through untouched: nothing is caught only to be re-raised. |
 | `bridge.py` | MCP client of prodtools' write and read servers (`mcpclient.StdioServer` per child, lazy, kept for the process life). Converts every prodtools failure into `BridgeError`: isError text from the write server, the `{"error": ...}` envelope from the read server. Reads one environment variable, `BEAMKIT_PRODTOOLS_ROOT`; the dev checkout to ship arrives as an argument. |
 | `mcpclient.py` | A synchronous handle on one MCP server over stdio: private event loop in a daemon thread, one serve task for the session's life, stderr tail for start failures, respawn after a child dies. Knows nothing about prodtools. |
@@ -111,7 +111,7 @@ prodtools servers that needs only `mcp`.
 | `_read_plane.py` | Prints one ntuple plane as TSV. Runs under a *different* interpreter (ana 2.8.0, for uproot) and imports nothing from beamkit. |
 | `paths.py` | `$BEAMKIT_HOME` and the three directories under it. |
 | `iri.py` | Thin client for the IRI Facility API v2 as NERSC serves it: paths in, parsed JSON out, `IriError` on anything that is not success. Knows nothing about beamkit runs; takes NERSC Superfacility API client credentials (Globus tokens are rejected by v2). |
-| `nersc_config.py` | Loads `$BEAMKIT_HOME/nersc.toml` — everything the NERSC backend needs to know about the facility and the caller's client — per tool call, refusing a missing or malformed file with the full key list. |
+| `nersc_config.py` | Loads `$BEAMKIT_HOME/nersc.toml` — everything the NERSC backend needs to know about the facility and the caller's client — refusing a missing or malformed file with the full key list. `api` is required on the `iri` transport only. The backend caches the loaded config and its client per (path, mtime), so one server process reads it once and keeps one authenticated session. |
 | `nersc_cnf.py` | Builds the cnf tarball for a NERSC run on the caller's machine: the deck without VCS internals plus a `jobpars.json` in the shape prodtools' `json2jobdef._build_g4bl_tarball` writes, so a later harvest can declare it as the parent of every nts file unchanged. |
 | `nersc_templates.py` | Fills in the `@@NAME@@` placeholders of the files beamkit puts on a Perlmutter node; the g4bl lines are prodtools' `utils.runmu2e._g4bl_script` reproduced here because the NERSC path runs no prodtools on the node. |
 | `templates/` | The four rendered files: `job.sh` (enter the Mu2e EL9 image via apptainer), `inner.sh` (per-index g4bl run, log opened first so 128 tasks on one node never interleave), `beamfile.sh` (enter the image to build a beam file), `beamfile_job.py` (self-contained BLTrackFile writer, using uproot from the cvmfs ana environment). |
@@ -242,11 +242,11 @@ because on a large run that read is hours long.
   beamkit's interpreter carries none of prodtools' environment. This is what
   lets the suite run anywhere.
 - **No fallbacks.** Validate at the boundary and fail loudly naming the cause.
-  The one deliberate exception is `backends/nersc.out_counts`, which reads a
+  The one deliberate exception is `backends/nersc._nts_entries`, which reads a
   missing CFS `out/` (a run that failed before its remote layout was ever
   created) as zero files rather than an error, the same way `client.exists()`
-  treats it — a ruling, not a silent default, and it does not extend to
-  `outputs()`, which lets that same "no such file" surface as `IriError`.
+  treats it — a ruling, not a silent default. Both `out_counts` and
+  `outputs()` read that one listing, so both answer "no outputs yet".
 - **Two identities.** `run_as="self"` touches only your own scratch, datasets
   and ledger. `run_as="mu2epro"` writes production SAM and submits production
   jobs, and is refused without `confirm=True` — here, and again inside

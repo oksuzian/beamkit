@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from beamkit import records
+from beamkit import BeamkitError, records
 
 
 def _rec(run_id="T.e470313", created="2026-09-03T10:00:00+00:00", state="created"):
@@ -76,3 +76,22 @@ def test_new_states_are_listable(tmp_path):
     for st in ("partially_submitted", "short", "complete"):
         records.save(_rec(run_id=f"T.{st}", state=st), tmp_path)
         assert [r.run_id for r in records.list_runs(tmp_path, state=st)] == [f"T.{st}"]
+
+
+def test_try_load_is_none_when_there_is_no_record(tmp_path):
+    """The callers that ask a question about a run dir rather than open one."""
+    assert records.try_load("T.absent", tmp_path) is None
+    records.save(_rec(), tmp_path)
+    assert records.try_load("T.e470313", tmp_path).run_id == "T.e470313"
+
+
+def test_claim_run_dir_refuses_a_used_id_unless_the_caller_says_retryable(tmp_path):
+    records.claim_run_dir(tmp_path, "T.e470313", lambda *a: False)
+    with pytest.raises(BeamkitError, match="already exists; a run id is never reused"):
+        records.claim_run_dir(tmp_path, "T.e470313", lambda *a: False)
+    assert records.claim_run_dir(tmp_path, "T.e470313", lambda *a: True).is_dir()
+
+
+def test_atomic_write_text_leaves_no_part_file(tmp_path):
+    records.atomic_write_text(tmp_path / "x.json", "{}\n")
+    assert (tmp_path / "x.json").read_text() == "{}\n" and not list(tmp_path.glob("*.part"))

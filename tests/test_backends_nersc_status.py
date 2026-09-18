@@ -1,6 +1,6 @@
 import pytest
 
-from beamkit import BeamkitError, iri, tools
+from beamkit import BeamkitError, tools
 from beamkit.backends import nersc
 from tests.test_backends_nersc_run import BASE, SHA, deck, fake, nersc_home, _run   # noqa: F401
 
@@ -73,12 +73,10 @@ def test_outputs_lists_cfs_paths(fake):
     assert out["files"][1]["path"] == f"{RD}/out/nts.u.T.e470313.00000002.root"
 
 
-def test_beamline_outputs_on_an_enqueue_failed_run_pins_the_current_raise(fake, monkeypatch):
+def test_beamline_outputs_on_an_enqueue_failed_run_is_empty_not_an_error(fake, monkeypatch):
     """A run that failed before any remote write has no out/ dir on CFS at
-    all. status() guards that with out_counts' missing-out/-is-zero rule;
-    beamline_outputs calls outputs() directly, which has no such guard and
-    lets the IriError through today (ledger Task 10 deferred). Pin the
-    current behavior so a future change to it is a deliberate decision."""
+    all. That is no outputs, not an error -- the same rule out_counts (and
+    client.exists) already applied; both read one listing now."""
     def boom(*a, **kw):
         raise OSError("disk full")
     monkeypatch.setattr(nersc.nersc_cnf, "build_cnf", boom)
@@ -86,8 +84,8 @@ def test_beamline_outputs_on_an_enqueue_failed_run_pins_the_current_raise(fake, 
         _run(njobs=1)
     rec = tools.beamline_status("T.e470313")["record"]
     assert rec["state"] == "enqueue_failed"
-    with pytest.raises(iri.IriError, match="No such file"):
-        tools.beamline_outputs("T.e470313")
+    out = tools.beamline_outputs("T.e470313")
+    assert out["files"] == [] and out["n_files"] == 0 and out["total_size"] == 0
 
 
 def test_make_recoveries_refused_on_a_nersc_run(fake):

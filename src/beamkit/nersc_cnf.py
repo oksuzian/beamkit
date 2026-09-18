@@ -2,6 +2,7 @@
 (the deck without VCS internals) plus jobpars.json in the shape prodtools'
 json2jobdef._build_g4bl_tarball writes, so a later harvest can declare it
 as the parent of every nts file unchanged."""
+import io
 import json
 import os
 import tarfile
@@ -36,12 +37,13 @@ def build_cnf(deck_dir, jobpars: dict, out_path) -> Path:
     if out_path.exists():
         raise CnfError(f"{out_path} exists; a cnf is never overwritten")
     part = out_path.with_name(out_path.name + ".part")
-    jp_path = out_path.with_name("jobpars.json")
-    jp_path.write_text(json.dumps(jobpars, indent=2) + "\n")
+    jp = (json.dumps(jobpars, indent=2) + "\n").encode()
     try:
         with tarfile.open(part, "w") as t:
             t.add(deck_dir, arcname="work", filter=_skip_vcs)
-            t.add(jp_path, arcname="jobpars.json")
+            info = tarfile.TarInfo("jobpars.json")
+            info.size = len(jp)
+            t.addfile(info, io.BytesIO(jp))
         size = part.stat().st_size
         if size > iri.UPLOAD_MAX:
             raise CnfError(f"{out_path.name}: {size} bytes exceeds the {iri.UPLOAD_MAX}-byte upload cap of the "
@@ -50,6 +52,4 @@ def build_cnf(deck_dir, jobpars: dict, out_path) -> Path:
     except BaseException:
         part.unlink(missing_ok=True)
         raise
-    finally:
-        jp_path.unlink(missing_ok=True)
     return out_path

@@ -171,3 +171,14 @@ def test_transport_keys(beamkit_home, sfapi):
     _write(beamkit_home, GOOD.format(sfapi=sfapi) + 'transport = "ssh"\n')
     with pytest.raises(nc.ConfigError, match="transport"):
         nc.load(beamkit_home)
+
+
+def test_api_is_required_for_the_iri_transport_only(beamkit_home, sfapi):
+    """The sfapi transport addresses sfapi_api and never reads api."""
+    without_api = GOOD.format(sfapi=sfapi).replace('api = "https://api.iri.nersc.gov/api/v2"\n', "")
+    _write(beamkit_home, without_api + 'transport = "sfapi"\n')
+    cfg = nc.load(beamkit_home)
+    assert cfg.transport == "sfapi" and cfg.api == ""
+    _write(beamkit_home, without_api)
+    with pytest.raises(nc.ConfigError, match="missing api"):
+        nc.load(beamkit_home)

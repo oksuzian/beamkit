@@ -181,19 +181,11 @@ class SfapiClient:
         return out
 
     def exists(self, path) -> bool:
-        try:
-            self.ls(path)
-            return True
-        except IriError as e:
-            if "No such file" in (e.detail or str(e)):
-                return False
-            raise
+        return iri.exists_via_ls(self.ls, path)
 
     def upload(self, local, remote) -> None:
         local = Path(local)
-        size = local.stat().st_size
-        if size > iri.UPLOAD_MAX:
-            raise IriError(f"{local}: {size} bytes exceeds the {iri.UPLOAD_MAX}-byte upload cap of the API")
+        iri.check_upload_size(local)
         with open(local, "rb") as fh:
             self._req("PUT", self._upath("upload", remote), files={"file": (local.name, fh)})
 

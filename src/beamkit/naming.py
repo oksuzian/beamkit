@@ -8,6 +8,7 @@ from beamkit import BeamkitError
 TAG_RE = re.compile(r"^[A-Za-z0-9]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 EXPLICIT_DSCONF_RE = re.compile(r"^[A-Za-z0-9-]+$")
+NTS_SEQ_RE = re.compile(r"^[0-9]+$")
 MAX_SUFFIX = 999
 
 
@@ -38,7 +39,26 @@ def cnf_name(owner, desc, dsconf) -> str:
 def dataset(owner, desc, dsconf) -> str:
     """The nts dataset a run writes. prodtools' push_cnf reports the entry's
     outloc key ("nts.*.root"), a glob, so the real name is composed here."""
-    return f"nts.{owner}.{desc}.{dsconf}.root"
+    return nts_prefix(owner, desc, dsconf) + "root"
+
+
+def nts_prefix(owner, desc, dsconf) -> str:
+    """What every nts file of a run is named before its sequencer."""
+    return f"nts.{owner}.{desc}.{dsconf}."
+
+
+def nts_index(name, owner, desc, dsconf) -> int | None:
+    """The job index one of this run's nts files carries, or None when
+    `name` (a bare name or a path) is not one of them. g4bl outputs are
+    %08d-indexed, so the sequencer is the whole fifth dot field and all
+    digits; anything else (a composite sequencer, another run's file) is
+    not a job index."""
+    base = str(name).rsplit("/", 1)[-1]
+    prefix = nts_prefix(owner, desc, dsconf)
+    if not (base.startswith(prefix) and base.endswith(".root")):
+        return None
+    seq = base[len(prefix):-len(".root")]
+    return int(seq) if NTS_SEQ_RE.match(seq) else None
 
 
 def beamfile_name(owner, desc, label, dsconf) -> str:

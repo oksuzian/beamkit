@@ -15,7 +15,7 @@ laptop `~/.beamkit/`. Step 2 is laptop-only.
 3. Write `nersc.toml` in the records dir:
 
    ```toml
-   api            = "https://api.iri.nersc.gov/api/v2"
+   api            = "https://api.iri.nersc.gov/api/v2"   # transport = "iri" only
    sfapi_dir      = "~/.sfapi"
    account        = "m4599"
    base_dir       = "/global/cfs/cdirs/m4599/Users/<nersc-login>/beamkit"
@@ -119,12 +119,14 @@ one-to-two-week production campaign run unattended.
 
 ## Configuration keys
 
-Required: `api`, `sfapi_dir`, `account`, `base_dir` (must be under
+Required: `sfapi_dir`, `account`, `base_dir` (must be under
 `/global/cfs/`, the only tree the job binds into the container), `qos`,
-`owner` (your NERSC login, a Mu2e name token). Optional:
+`owner` (your NERSC login, a Mu2e name token), plus `api` on the `iri`
+transport, which the `sfapi` transport never reads. Optional:
 
 | key | default | meaning |
 |---|---|---|
+| `api` | — | IRI Facility API v2 base URL; required for `transport = "iri"` |
 | `transport` | `"iri"` | `"iri"`: IRI Facility API v2 at `api`. `"sfapi"`: legacy Superfacility API v1.2, same client. |
 | `sfapi_api` | `https://api.nersc.gov/api/v1.2` | base URL for the sfapi transport |
 | `machine` | `"perlmutter"` | machine name in sfapi paths |

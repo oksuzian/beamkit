@@ -8,7 +8,10 @@ from pathlib import Path
 
 from beamkit import BeamkitError, naming
 
-REQUIRED = ("api", "sfapi_dir", "account", "base_dir", "qos", "owner")
+REQUIRED = ("sfapi_dir", "account", "base_dir", "qos", "owner")
+# the IRI Facility API base; the sfapi transport addresses sfapi_api instead
+# and never reads it, so it is required only for transport = "iri"
+IRI_REQUIRED = ("api",)
 DEFAULTS = {
     "procs_per_node": 128,
     "shared_qos": "shared",
@@ -29,7 +32,6 @@ class ConfigError(BeamkitError):
 
 @dataclass(frozen=True)
 class NerscConfig:
-    api: str
     sfapi_dir: Path
     account: str
     base_dir: str
@@ -38,6 +40,7 @@ class NerscConfig:
     procs_per_node: int
     image: str
     apptainer: str
+    api: str = ""               # required for transport = "iri" only
     # A slice smaller than a node goes to shared_qos, non-exclusive, charged
     # per core, when it fits the shared queue's cap (half a node on
     # Perlmutter). Larger partial slices and full slices take a whole node.
@@ -137,25 +140,29 @@ def load(home) -> NerscConfig:
     path = config_path(home)
     if not path.is_file():
         raise ConfigError(f"no NERSC config at {path}; create it with keys "
-                          f"{', '.join(REQUIRED)} (optional: {', '.join(DEFAULTS)})")
+                          f"{', '.join(REQUIRED)} (plus {', '.join(IRI_REQUIRED)} on the iri "
+                          f"transport; optional: {', '.join(DEFAULTS)})")
     tomllib = _toml()
     try:
         raw = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
-    unknown = set(raw) - set(REQUIRED) - set(DEFAULTS)
+    unknown = set(raw) - set(REQUIRED) - set(IRI_REQUIRED) - set(DEFAULTS)
     if unknown:
         raise ConfigError(f"{path}: unknown key {sorted(unknown)[0]!r}; allowed: "
-                          f"{', '.join((*REQUIRED, *DEFAULTS))}")
-    missing = [k for k in REQUIRED if k not in raw]
-    if missing:
-        raise ConfigError(f"{path}: missing {', '.join(missing)}; required keys are {', '.join(REQUIRED)}")
-    ppn = _posint(raw, "procs_per_node", path)
+                          f"{', '.join((*REQUIRED, *IRI_REQUIRED, *DEFAULTS))}")
     transport = _text(raw, "transport") if "transport" in raw else DEFAULTS["transport"]
     if transport not in TRANSPORTS:
         raise ConfigError(f"{path}: transport must be one of {', '.join(TRANSPORTS)}, got {transport!r}")
+    required = REQUIRED + (IRI_REQUIRED if transport == "iri" else ())
+    missing = [k for k in required if k not in raw]
+    if missing:
+        raise ConfigError(f"{path}: missing {', '.join(missing)}; transport {transport!r} requires "
+                          f"{', '.join(required)}")
+    ppn = _posint(raw, "procs_per_node", path)
     smp = _posint(raw, "shared_max_procs", path)
-    return NerscConfig(api=_text(raw, "api").rstrip("/"), sfapi_dir=Path(_text(raw, "sfapi_dir")).expanduser(),
+    return NerscConfig(api=_text(raw, "api").rstrip("/") if "api" in raw else "",
+                       sfapi_dir=Path(_text(raw, "sfapi_dir")).expanduser(),
                        account=_text(raw, "account"),
                        base_dir=_validate_base_dir(_text(raw, "base_dir").rstrip("/"), path),
                        qos=_text(raw, "qos"), owner=_validate_owner(_text(raw, "owner"), path),

@@ -236,3 +236,12 @@ def test_submit_run_slices_by_record_slice_size_not_live_config(fake, nersc_home
     assert offsets_counts == [(0, 128), (128, 128), (256, 44)]
     covered = [i for o, c in offsets_counts for i in range(o, o + c)]
     assert len(covered) == len(set(covered)) == 300
+
+
+def test_one_client_serves_every_tool_call_on_the_same_config(fake):
+    """The config is read and the session authenticated once per nersc.toml,
+    not once per tool call."""
+    _run(njobs=1)
+    tools.beamline_status("T.e470313")
+    tools.beamline_outputs("T.e470313")
+    assert len(fake.made) == 1

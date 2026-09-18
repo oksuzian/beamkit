@@ -92,9 +92,11 @@ def test_push_file_available_follows_the_listing(fake_prodtools_root, monkeypatc
 
 
 def test_push_file_missing_in_prodtools_is_clear_error(fake_prodtools_root, monkeypatch, tmp_path):
+    """_call refuses every absent tool by name; publishing.check_ready is
+    the boundary probe that keeps a publish=True from getting this far."""
     monkeypatch.setenv("FAKE_PRODTOOLS_OMIT", "push_file")
     bridge.reset()
-    with pytest.raises(bridge.BridgeError, match="publish=False"):
+    with pytest.raises(bridge.BridgeError, match="no 'push_file' tool"):
         bridge.push_file(tmp_path / "f.txt", "scratch", ["a.root"], "self", False)
 
 

@@ -1,9 +1,10 @@
 """FastMCP wiring for beamkit: registers tools.py's functions as they are."""
+import inspect
 import logging
 import os
 import sys
 
-from beamkit import tools
+from beamkit import records, tools
 
 INSTRUCTIONS = """
 beamkit: G4beamline production over the Mu2e prodtools g4bl runner.
@@ -50,31 +51,26 @@ fetch_outputs(run_id, dest, kind) copies the nts files or the complete
 beam files from CFS into a local directory through the API, at most
 5 MB per file; a run with a larger file is refused whole and needs
 Globus or scp.
-"""
 
-TOOLS = {
-    "run_beamline": "Pin a deck commit and submit the run: through prodtools (site=\"fermilab\") or as Slurm jobs on Perlmutter through the IRI API (site=\"nersc\").",
-    "make_recoveries": "One prodtools tick for this run: verify, resubmit missing indices, feed unsubmitted slices. Ledger-wide recovery pass.",
-    "submit_run": "NERSC runs only: submit the Slurm jobs of a run created with submit=false, or the jobs a partial submit did not reach.",
-    "beamline_status": "Run record merged with campaign status: prodtools (site=\"fermilab\") or Slurm job states and CFS output counts, expected/nts/logs/missing (site=\"nersc\").",
-    "list_beamline_runs": "Run records under this user's beamkit dir, newest first; state in enqueue_failed/created/submitted/needs_attention/partially_submitted/short/complete.",
-    "beamline_outputs": "Files of the run's nts dataset with sizes and paths: dCache (site=\"fermilab\") or CFS (site=\"nersc\").",
-    "fetch_outputs": "NERSC runs only: copy the run's nts files (kind=\"nts\") or complete beam files (kind=\"beamfiles\") from CFS into a local directory through the API, at most 5 MB per file; larger files need Globus or scp.",
-    "make_beamfile": "Build a BLTrackFile beam file from the run's nts files, through prodtools (site=\"fermilab\") or as a Slurm job on Perlmutter (site=\"nersc\"); preset flavor bm/ps or custom cuts; label names the files (default: the flavor); optional SAM publish.",
-    "get_server_info": "beamkit version, backends (fermilab/nersc availability), prodtools root and commit, directories, limits, walltime_default.",
-}
-TOOL_NAMES = tuple(TOOLS)
+A run's state, which list_beamline_runs also filters on, is one of
+@@STATES@@.
+""".replace("@@STATES@@", "/".join(records.STATES))
+
+TOOLS = ("run_beamline", "make_recoveries", "submit_run", "beamline_status", "list_beamline_runs",
+         "beamline_outputs", "fetch_outputs", "make_beamfile", "get_server_info")
 
 
 def create_mcp_server():
     """The tools.py functions ARE the MCP tools: FastMCP builds each schema
     from the function's annotations, so tools.py annotates every parameter
-    (an unannotated one would reach the client as a string)."""
+    (an unannotated one would reach the client as a string), and takes each
+    tool's description from the function's own docstring."""
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP("beamkit", instructions=INSTRUCTIONS)
-    for name, description in TOOLS.items():
-        mcp.tool(name=name, description=description)(getattr(tools, name))
+    for name in TOOLS:
+        fn = getattr(tools, name)
+        mcp.tool(name=name, description=inspect.getdoc(fn))(fn)
     return mcp
 
 

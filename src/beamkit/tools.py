@@ -38,19 +38,12 @@ def _summary(output, n=5):
     return "\n".join(lines[-n:])
 
 
-def _pin(deck_ref, deck_dir, deck_url, ident):
-    return decks.pin(deck_ref, deck_dir, deck_url, paths.decks_dir(), ident.production)
-
-
 def _is_retryable_run_dir(run_id, runs_dir) -> bool:
     """A run dir left by a push that never reached prodtools: state
     'enqueue_failed' with no campaign. Nothing was created anywhere else, so
     the retry overwrites it in place. Any other run dir stays refused."""
-    try:
-        rec = records.load(run_id, runs_dir)
-    except records.RecordError:
-        return False
-    return rec.state == "enqueue_failed" and rec.campaign_id is None
+    rec = records.try_load(run_id, runs_dir)
+    return bool(rec and rec.state == "enqueue_failed" and rec.campaign_id is None)
 
 
 def _dataset(rec):
@@ -124,16 +117,13 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
     params = compose.validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
     _outloc(outloc, ident)
     slice_size = _slice_size(slice_size, njobs)
-    pin = _pin(deck_ref, deck_dir, deck_url, ident)
+    pin = decks.pin(deck_ref, deck_dir, deck_url, paths.decks_dir(), ident.production)
     dsconf = naming.allocate_dsconf(ident.owner, tag, naming.dsconf_base(pin.sha), bridge.cnf_exists, explicit=dsconf)
     entry = compose.entry(tag=tag, dsconf=dsconf, deck_dir=pin.dir, main_input=main_input,
                           events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
     run_id = naming.run_id(tag, dsconf)
     runs_dir = paths.runs_dir()
-    rdir = records.run_dir(runs_dir, run_id)
-    if rdir.exists() and not _is_retryable_run_dir(run_id, runs_dir):
-        raise BeamkitError(f"run dir {rdir} already exists; a run id is never reused")
-    rdir.mkdir(parents=True, exist_ok=True)
+    rdir = records.claim_run_dir(runs_dir, run_id, _is_retryable_run_dir)
     entry_path = compose.write_entry_json(entry, rdir / "entry.json")
     rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=ident.owner, run_as=run_as,
                             deck=pin.as_record(), params=params, events_per_job=events_per_job,
@@ -284,13 +274,13 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
     check: pot counts the files that exist. flavor selects the cut table;
     label names the files and defaults to the flavor."""
     backends.validate_site(site)
-    rec_site = records.load(run_id, paths.runs_dir()).site
-    if rec_site != site:
-        raise BeamkitError(f"run {run_id} is a {rec_site!r} run; pass site={rec_site!r}")
+    rec = records.load(run_id, paths.runs_dir())
+    if rec.site != site:
+        raise BeamkitError(f"run {run_id} is a {rec.site!r} run; pass site={rec.site!r}")
     if site == "nersc":
         if location is not None:
             raise BeamkitError("location applies to site='fermilab' publishing only")
-        return nersc_backend.make_beamfile(run_id=run_id, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
+        return nersc_backend.make_beamfile(rec=rec, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
                                            label=label, publish=publish)
     ident = identity.resolve(run_as, confirm, writes=publish)
     label = flavor if label is None else label
@@ -300,7 +290,6 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
     if publish:
         location = location or ident.default_publish_location
         publishing.check_ready(location)
-    rec = records.load(run_id, paths.runs_dir())
     # the file is NAMED from the record's identity and PUSHED as run_as; a
     # mismatch publishes one owner's name under the other account
     if publish and ident.run_as != rec.run_as:
@@ -329,7 +318,7 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
         sam_name = naming.beamfile_name(rec.owner, rec.tag, label, rec.dsconf)
         publishing.publish(out_txt, out_dir / sam_name, location, side["source_files"], run_as, confirm)
         side["sam_name"], side["location"] = sam_name, location
-    out_json.write_text(json.dumps(side, indent=2) + "\n")
+    records.atomic_write_text(out_json, json.dumps(side, indent=2) + "\n")
     rec.beamfiles.append(side)
     records.save(rec, paths.runs_dir())
     return side

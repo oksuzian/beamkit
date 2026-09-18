@@ -9,7 +9,7 @@ import os
 import threading
 from pathlib import Path
 
-from beamkit import BeamkitError
+from beamkit import BeamkitError, naming
 from beamkit.decks import DeckError, _git
 from beamkit.mcpclient import McpClientError, McpToolError, StdioServer
 
@@ -159,9 +159,6 @@ def push_file_available() -> bool:
 
 
 def push_file(path, location, parents, run_as, confirm) -> dict:
-    if not push_file_available():
-        raise BridgeError("this prodtools has no push_file tool; make_beamfile works with "
-                          "publish=False only until prodtools-write gains push_file")
     return _call("push_file", path=str(path), location=location, parents=list(parents),
                  run_as=run_as, confirm=confirm)
 
@@ -185,16 +182,18 @@ def cnf_exists(cnf_name) -> bool:
 def dataset_files(dataset, location) -> list:
     """prodtools lists the files with sizes and /pnfs paths; the job index
     is beamkit's reading of the sequencer, and only a plain %08d one."""
+    parts = dataset.split(".")
+    if len(parts) != 5 or parts[0] != "nts":
+        raise BridgeError(f"{dataset!r} is not an nts dataset name (nts.<owner>.<desc>.<dsconf>.root)")
+    _, owner, desc, dsconf, _ = parts
     out = _call("dataset_files", dataset=dataset, location=location)
     files = []
     for f in _need(out, "files", "dataset_files"):
         name = _need(f, "name", "dataset_files")
-        size = _need(f, "size", "dataset_files")
-        path = _need(f, "path", "dataset_files")
-        parts = name.split(".")
-        seq = parts[4] if len(parts) >= 6 else ""
-        if not seq.isdigit():
-            raise BridgeError(f"{name}: sequencer {seq!r} is not a plain job index; "
+        index = naming.nts_index(name, owner, desc, dsconf)
+        if index is None:
+            raise BridgeError(f"{name}: its sequencer is not a plain job index; "
                               f"beamkit reads only %08d-indexed g4bl outputs")
-        files.append({"name": name, "index": int(seq), "size": int(size), "path": path})
+        files.append({"name": name, "index": index, "size": int(_need(f, "size", "dataset_files")),
+                      "path": _need(f, "path", "dataset_files")})
     return sorted(files, key=lambda f: f["index"])

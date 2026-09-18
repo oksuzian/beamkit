@@ -57,6 +57,27 @@ def _detail(resp) -> str:
     return str(body)[:500]
 
 
+def exists_via_ls(ls, path) -> bool:
+    """Both transports answer "is it there" with one ls: only the API's own
+    "No such file" is an answer, anything else is still an error."""
+    try:
+        ls(path)
+        return True
+    except IriError as e:
+        if "No such file" in (e.detail or str(e)):
+            return False
+        raise
+
+
+def check_upload_size(local) -> int:
+    """The upload cap, checked before any request so an oversized file
+    costs nothing but a stat."""
+    size = Path(local).stat().st_size
+    if size > UPLOAD_MAX:
+        raise IriError(f"{local}: {size} bytes exceeds the {UPLOAD_MAX}-byte upload cap of the API")
+    return size
+
+
 class IriClient:
     def __init__(self, cfg, token_provider=None, session=None):
         self.cfg = cfg
@@ -66,6 +87,7 @@ class IriClient:
             session = requests.Session()
         self._session = session
         self._token = None
+        self._ids = {}          # resource kind -> id, resolved once per client
 
     def _headers(self, extra=None):
         if self._token is None:
@@ -114,6 +136,13 @@ class IriClient:
         raise IriError(f"no {kind} resource named {name!r}; the facility lists: "
                        f"{', '.join(str(r.get('name')) for r in rs) or 'nothing'}")
 
+    def _resource(self, kind, name) -> str:
+        """resource_id, resolved once per client: the ids do not change
+        under a session, and every filesystem and compute call needs one."""
+        if kind not in self._ids:
+            self._ids[kind] = self.resource_id(kind, name)
+        return self._ids[kind]
+
     # --- tasks
     def wait_task(self, resp, timeout_s=600, poll_s=3) -> dict:
         try:
@@ -135,7 +164,7 @@ class IriClient:
 
     # --- filesystem
     def _fs(self):
-        return self.resource_id("filesystem", "cfs")
+        return self._resource("filesystem", "cfs")
 
     def mkdir(self, path) -> None:
         self.wait_task(self._req("POST", f"/filesystem/mkdir/{self._fs()}", json={"path": path}))
@@ -145,19 +174,11 @@ class IriClient:
                     .get("output") or [])
 
     def exists(self, path) -> bool:
-        try:
-            self.ls(path)
-            return True
-        except IriError as e:
-            if "No such file" in (e.detail or str(e)):
-                return False
-            raise
+        return exists_via_ls(self.ls, path)
 
     def upload(self, local, remote) -> None:
         local = Path(local)
-        size = local.stat().st_size
-        if size > UPLOAD_MAX:
-            raise IriError(f"{local}: {size} bytes exceeds the {UPLOAD_MAX}-byte upload cap of the API")
+        check_upload_size(local)
         with open(local, "rb") as fh:
             resp = self._req("POST", f"/filesystem/upload/{self._fs()}", params={"path": remote},
                              files={"file": (local.name, fh)})
@@ -177,7 +198,7 @@ class IriClient:
 
     # --- compute
     def _compute(self):
-        return self.resource_id("compute", "compute")
+        return self._resource("compute", "compute")
 
     def submit(self, spec) -> str:
         r = self._req("POST", f"/compute/job/{self._compute()}", json=spec)

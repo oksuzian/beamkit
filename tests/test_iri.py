@@ -121,3 +121,19 @@ def test_sfapi_token_refuses_a_public_jwk(cfg, tmp_path):
     jwk.chmod(0o400)
     with pytest.raises(iri.IriError, match="PUBLIC JWK"):
         iri.sfapi_token(cfg)
+
+
+def test_exists_re_raises_anything_that_is_not_no_such_file(client, monkeypatch):
+    """Both transports share exists_via_ls: only the API's own "No such
+    file" is an answer; a 500 or an expired token must not read as False."""
+    def boom(path):
+        raise iri.IriError("POST /filesystem/ls -> 500: Internal Server Error", status=500, detail="boom")
+    monkeypatch.setattr(client, "ls", boom)
+    with pytest.raises(iri.IriError, match="500"):
+        client.exists("/global/cfs/x")
+
+
+def test_resource_ids_are_resolved_once_per_client(client):
+    client.mkdir("/global/cfs/cdirs/m4599/Users/u/beamkit")
+    client.mkdir("/global/cfs/cdirs/m4599/Users/u/beamkit/runs")
+    assert sum(1 for c in client.fake.calls if c[1].endswith("/filesystem/resources")) == 1

@@ -2,4 +2,4 @@
 # beamkit NERSC backend: build one beam file from the run's nts files, on
 # the node, with uproot from the cvmfs ana environment. One process.
 exec "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer" exec -B /cvmfs -B /global/cfs "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest" \
-  /cvmfs/mu2e.opensciencegrid.org/env/ana/2.8.0/bin/python "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313/beamfiles/beamfile_job.bm.py"
+  "/cvmfs/mu2e.opensciencegrid.org/env/ana/2.8.0/bin/python" "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313/beamfiles/beamfile_job.bm.py"

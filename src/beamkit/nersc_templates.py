@@ -4,11 +4,13 @@ supplied key must be used. The g4bl lines are prodtools'
 utils.runmu2e._g4bl_script, reproduced here because the NERSC path runs
 no prodtools on the node; tests/_bridge_contract_probe.py holds the two
 equal."""
+import json
 import re
 import shlex
 from pathlib import Path
 
 from beamkit import BeamkitError
+from beamkit import beamfile as _beamfile_module
 
 TEMPLATES = Path(__file__).with_name("templates")
 PLACEHOLDER = re.compile(r"@@([A-Z0-9_]+)@@")
@@ -70,11 +72,9 @@ def render_inner(cfg, *, run_id, run_dir, owner, tag, dsconf, events_per_job, ma
 
 
 def render_beamfile_sh(cfg, *, job_py) -> str:
-    return render("beamfile.sh", {"APPTAINER": cfg.apptainer, "IMAGE": cfg.image, "JOB_PY": job_py})
+    return render("beamfile.sh", {"APPTAINER": cfg.apptainer, "IMAGE": cfg.image, "JOB_PY": job_py,
+                                  "ANA_PYTHON": _beamfile_module.ANA_PYTHON})
 
-
-import json
-from beamkit import beamfile as _beamfile_module
 
 _IMPORT_LINE = "from beamkit import BeamkitError\n"
 
