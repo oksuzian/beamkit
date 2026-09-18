@@ -37,11 +37,12 @@ def nersc_home(beamkit_home, tmp_path):
 @pytest.fixture
 def fake(monkeypatch, deck, nersc_home):
     s = FakeSession()
-    made = []
-    def make_client(cfg):
-        made.append(cfg)
-        return iri.IriClient(cfg, token_provider=lambda: "tok", session=s)
-    monkeypatch.setattr(nersc, "make_client", make_client)
+    made = []      # one client per config, as nersc.client() itself caches
+    def client():
+        if not made:
+            made.append(iri.IriClient(nersc.config(), token_provider=lambda: "tok", session=s))
+        return made[0]
+    monkeypatch.setattr(nersc, "client", client)
     monkeypatch.setattr(decks, "materialize", lambda url, ref, cache: decks.DeckPin(url, ref, SHA, str(deck), True))
     s.made = made
     return s

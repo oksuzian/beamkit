@@ -98,8 +98,8 @@ def validate_label(label) -> str:
 
 
 def validate_plane(plane) -> str:
-    """The NTuple/<plane> name handed to _read_plane's argv. Checked here so
-    a typo is refused before the dataset listing and the ana subprocess."""
+    """The NTuple/<plane> name handed to _read_plane's argv; checked before
+    the dataset listing and the ana subprocess."""
     if not isinstance(plane, str) or not PLANE_RE.match(plane):
         raise BeamfileError(f"plane {plane!r} must match {PLANE_RE.pattern}")
     return plane
@@ -199,8 +199,7 @@ _READ_PLANE = Path(__file__).with_name("_read_plane.py")
 
 def iter_plane_rows(paths, plane, python=None) -> Iterator[Row]:
     """Rows of NTuple/<plane> from every file, in order, via the ana
-    interpreter. Any reader failure is raised with its stderr; nothing is
-    skipped."""
+    interpreter. A reader failure is raised with its stderr; nothing is skipped."""
     python = python or ANA_PYTHON
     if not os.path.exists(python):
         raise BeamfileError(f"ana interpreter {python} not found (set BEAMKIT_ANA_PYTHON)")

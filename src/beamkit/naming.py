@@ -53,11 +53,9 @@ def nts_prefix(owner, desc, dsconf) -> str:
 
 
 def nts_index(name, owner, desc, dsconf) -> int | None:
-    """The job index one of this run's nts files carries, or None when
-    `name` (a bare name or a path) is not one of them. g4bl outputs are
-    %08d-indexed, so the sequencer is the whole fifth dot field and all
-    digits; anything else (a composite sequencer, another run's file) is
-    not a job index."""
+    """The job index one of this run's nts files carries (name or path), or
+    None. g4bl outputs are %08d-indexed, so a composite sequencer or another
+    run's file is not a job index."""
     base = str(name).rsplit("/", 1)[-1]
     prefix = nts_prefix(owner, desc, dsconf)
     if not (base.startswith(prefix) and base.endswith(".root")):
@@ -67,19 +65,16 @@ def nts_index(name, owner, desc, dsconf) -> int | None:
 
 
 def beamfile_name(owner, desc, label, dsconf) -> str:
-    """The SAM name of a published beam file. Six fields: pushOutput
-    declares FILES, and a five-field name is a dataset. The sequencer is
-    `0`, as on the cnf tarball, since a run has one beam file per label."""
+    """The SAM name of a published beam file. Six fields: pushOutput declares
+    FILES and a five-field name is a dataset. Sequencer `0`, as on the cnf."""
     return f"etc.{owner}.{desc}Beam-{label}.{dsconf}.0.txt"
 
 
 def allocate_dsconf(owner, desc, base, taken, explicit=None) -> str:
-    """The dsconf for a new run. `taken(cnf_name) -> bool` is the SAM probe.
-
-    The unsuffixed base is always tried first; `-NNN` starts at -001 and
-    is issued only on collision. An explicit dsconf is probed once and a
-    taken one is an error: a cnf name is never reused.
-    """
+    """The dsconf for a new run; `taken(cnf_name) -> bool` is the SAM probe.
+    The unsuffixed base is tried first and `-NNN` is issued only on
+    collision. An explicit dsconf is probed once and a taken one is an
+    error: a cnf name is never reused."""
     if explicit is not None:
         if not isinstance(explicit, str) or not EXPLICIT_DSCONF_RE.match(explicit):
             raise NamingError(f"dsconf {explicit!r} is not a Mu2e token ([A-Za-z0-9-]+)")

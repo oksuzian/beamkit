@@ -1,7 +1,6 @@
-"""Thin client for the IRI Facility API v2 as NERSC serves it. Knows
-nothing about beamkit runs: paths in, parsed JSON out, IriError on
-anything that is not success. Token: NERSC Superfacility API client
-credentials (Globus tokens are rejected by v2)."""
+"""Thin client for the IRI Facility API v2 as NERSC serves it: paths in,
+parsed JSON out, IriError on anything else. Token: NERSC Superfacility API
+client credentials (Globus tokens are rejected by v2)."""
 import json
 import time
 from pathlib import Path
@@ -57,28 +56,12 @@ def _detail(resp) -> str:
     return str(body)[:500]
 
 
-def exists_via_ls(ls, path) -> bool:
-    """Both transports answer "is it there" with one ls: only the API's own
-    "No such file" is an answer, anything else is still an error."""
-    try:
-        ls(path)
-        return True
-    except IriError as e:
-        if "No such file" in (e.detail or str(e)):
-            return False
-        raise
+class BaseClient:
+    """What both transports share: the token header, one request wrapper, the
+    task poll loop, exists and the upload cap. Subclasses supply _url, the
+    task hooks (_task_ref / _task_done / _task_error) and, for sfapi, _body."""
+    _FAILED = ("failed", "canceled")
 
-
-def check_upload_size(local) -> int:
-    """The upload cap, checked before any request so an oversized file
-    costs nothing but a stat."""
-    size = Path(local).stat().st_size
-    if size > UPLOAD_MAX:
-        raise IriError(f"{local}: {size} bytes exceeds the {UPLOAD_MAX}-byte upload cap of the API")
-    return size
-
-
-class IriClient:
     def __init__(self, cfg, token_provider=None, session=None):
         self.cfg = cfg
         self._token_provider = token_provider or (lambda: sfapi_token(cfg))
@@ -97,14 +80,11 @@ class IriClient:
             h.update(extra)
         return h
 
+    def _body(self, method, path, body):
+        return body
+
     def _req(self, method, path, headers=None, **kw):
-        if path.startswith("http"):
-            if not path.startswith(self.cfg.api):
-                raise IriError(f"{method} {path}: refusing to follow a URL outside the configured "
-                               f"API base {self.cfg.api}")
-            url = path
-        else:
-            url = f"{self.cfg.api}{path}"
+        url = self._url(method, path)
         try:
             resp = self._session.request(method, url, headers=self._headers(headers), timeout=120, **kw)
             if not resp.ok:
@@ -112,17 +92,76 @@ class IriClient:
                 hint = f"; {_AUTH_HINT}" if resp.status_code in (401, 403) else ""
                 raise IriError(f"{method} {path} -> {resp.status_code}: {detail}{hint}",
                                status=resp.status_code, detail=detail)
-            return resp.json() if resp.text else {}
+            body = resp.json() if resp.text else {}
         except IriError:
             raise
         except Exception as e:
             raise IriError(f"{method} {path}: {type(e).__name__}: {e}") from e
+        return self._body(method, path, body)
+
+    def wait_task(self, resp, timeout_s=600, poll_s=3) -> dict:
+        try:
+            tid, uri = self._task_ref(resp)
+        except Exception as e:
+            raise IriError(f"wait_task: malformed task response {resp!r}: {type(e).__name__}: {e}") from e
+        deadline = time.monotonic() + timeout_s
+        while True:
+            t = self._req("GET", uri)
+            st = t.get("status")
+            if st == "completed":
+                return self._task_done(tid, t)
+            if st in self._FAILED:
+                err = self._task_error(t)
+                raise IriError(f"task {tid} {st}: {err}", detail=err)
+            if time.monotonic() >= deadline:
+                raise IriError(f"task {tid} still {st} after {timeout_s} s")
+            time.sleep(poll_s)
+
+    def exists(self, path) -> bool:
+        # one ls: only the API's own "No such file" is an answer, anything
+        # else (a 500, an expired token) is still an error
+        try:
+            self.ls(path)
+            return True
+        except IriError as e:
+            if "No such file" in (e.detail or str(e)):
+                return False
+            raise
+
+    def _check_upload(self, local) -> None:
+        # checked before any request, so an oversized file costs only a stat
+        size = Path(local).stat().st_size
+        if size > UPLOAD_MAX:
+            raise IriError(f"{local}: {size} bytes exceeds the {UPLOAD_MAX}-byte upload cap of the API")
+
+
+class IriClient(BaseClient):
+    def _url(self, method, path) -> str:
+        if not path.startswith("http"):
+            return f"{self.cfg.api}{path}"
+        if not path.startswith(self.cfg.api):
+            raise IriError(f"{method} {path}: refusing to follow a URL outside the configured "
+                           f"API base {self.cfg.api}")
+        return path
+
+    def _task_ref(self, resp):
+        return resp["task_id"], resp["task_uri"]
+
+    def _task_done(self, tid, t) -> dict:
+        return t.get("result") or {}
+
+    def _task_error(self, t) -> str:
+        return (t.get("result") or {}).get("error", "")
 
     # --- account and resources
     def whoami(self) -> dict:
         return self._req("GET", "/account/whoami")
 
     def resource_id(self, kind, name) -> str:
+        """The facility's id for a resource, resolved once per client: the ids
+        do not change under a session and every call below needs one."""
+        if kind in self._ids:
+            return self._ids[kind]
         if kind == "compute":
             rs = self._req("GET", "/compute/resources")
         elif kind == "filesystem":
@@ -132,83 +171,51 @@ class IriClient:
         rs = rs if isinstance(rs, list) else rs.get("items", [])
         for r in rs:
             if r.get("name") == name:
+                self._ids[kind] = r["id"]
                 return r["id"]
         raise IriError(f"no {kind} resource named {name!r}; the facility lists: "
                        f"{', '.join(str(r.get('name')) for r in rs) or 'nothing'}")
 
-    def _resource(self, kind, name) -> str:
-        """resource_id, resolved once per client: the ids do not change
-        under a session, and every filesystem and compute call needs one."""
-        if kind not in self._ids:
-            self._ids[kind] = self.resource_id(kind, name)
-        return self._ids[kind]
-
-    # --- tasks
-    def wait_task(self, resp, timeout_s=600, poll_s=3) -> dict:
-        try:
-            tid, uri = resp["task_id"], resp["task_uri"]
-        except Exception as e:
-            raise IriError(f"wait_task: malformed task response {resp!r}: {type(e).__name__}: {e}") from e
-        deadline = time.monotonic() + timeout_s
-        while True:
-            t = self._req("GET", uri)
-            st = t.get("status")
-            if st == "completed":
-                return t.get("result") or {}
-            if st in ("failed", "canceled"):
-                err = (t.get("result") or {}).get("error", "")
-                raise IriError(f"task {tid} {st}: {err}", detail=err)
-            if time.monotonic() >= deadline:
-                raise IriError(f"task {tid} still {st} after {timeout_s} s")
-            time.sleep(poll_s)
-
     # --- filesystem
-    def _fs(self):
-        return self._resource("filesystem", "cfs")
-
     def mkdir(self, path) -> None:
-        self.wait_task(self._req("POST", f"/filesystem/mkdir/{self._fs()}", json={"path": path}))
+        self.wait_task(self._req("POST", f"/filesystem/mkdir/{self.resource_id('filesystem', 'cfs')}",
+                                 json={"path": path}))
 
     def ls(self, path) -> list[dict]:
-        return list(self.wait_task(self._req("POST", f"/filesystem/ls/{self._fs()}", json={"path": path}))
-                    .get("output") or [])
-
-    def exists(self, path) -> bool:
-        return exists_via_ls(self.ls, path)
+        return list(self.wait_task(self._req("POST", f"/filesystem/ls/{self.resource_id('filesystem', 'cfs')}",
+                                             json={"path": path})).get("output") or [])
 
     def upload(self, local, remote) -> None:
         local = Path(local)
-        check_upload_size(local)
+        self._check_upload(local)
         with open(local, "rb") as fh:
-            resp = self._req("POST", f"/filesystem/upload/{self._fs()}", params={"path": remote},
-                             files={"file": (local.name, fh)})
+            resp = self._req("POST", f"/filesystem/upload/{self.resource_id('filesystem', 'cfs')}",
+                             params={"path": remote}, files={"file": (local.name, fh)})
         self.wait_task(resp)
 
     def download(self, remote) -> str:
-        res = self.wait_task(self._req("POST", f"/filesystem/download/{self._fs()}", json={"path": remote}))
+        res = self.wait_task(self._req("POST", f"/filesystem/download/{self.resource_id('filesystem', 'cfs')}",
+                                       json={"path": remote}))
         out = res.get("output") if isinstance(res, dict) else res
         return out if isinstance(out, str) else json.dumps(out)
 
     def download_bytes(self, remote) -> bytes:
         # v2's download has no binary flag: on a ROOT file the task fails
-        # server-side with pydantic's string_unicode error (checked
-        # 2026-09-14), so there is nothing to decode
+        # server-side with pydantic's string_unicode error (checked 2026-09-14)
         raise IriError(f"the IRI v2 API cannot download a binary file ({remote}): its download task fails "
                        "with a string_unicode error; set transport = \"sfapi\" in nersc.toml for fetch_outputs")
 
     # --- compute
-    def _compute(self):
-        return self._resource("compute", "compute")
-
     def submit(self, spec) -> str:
-        r = self._req("POST", f"/compute/job/{self._compute()}", json=spec)
+        r = self._req("POST", f"/compute/job/{self.resource_id('compute', 'compute')}", json=spec)
         jid = r.get("id") if isinstance(r, dict) else None
         if not jid:
             raise IriError(f"submit returned no job id: {r!r}")
         return str(jid)
 
     def status(self, job_id) -> dict:
-        r = self._req("GET", f"/compute/status/{self._compute()}/{job_id}", params={"include_spec": "false"})
+        r = self._req("GET", f"/compute/status/{self.resource_id('compute', 'compute')}/{job_id}",
+                      params={"include_spec": "false"})
         st = r.get("status") if isinstance(r, dict) else None
         if not isinstance(st, dict) or "state" not in st:
             raise IriError(f"status of job {job_id} has no state: {r!r}")

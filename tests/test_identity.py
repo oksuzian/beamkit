@@ -11,7 +11,7 @@ def user(monkeypatch):
 def test_self_is_the_user_and_needs_no_confirm():
     i = identity.resolve("self")
     assert i.run_as == "self" and i.owner == "u" and i.mine is True and i.production is False
-    assert i.default_publish_location == "scratch" and i.dev_dir is None
+    assert i.dev_dir is None
 
 
 def test_mu2epro_is_production_and_needs_confirm():
@@ -19,7 +19,6 @@ def test_mu2epro_is_production_and_needs_confirm():
         identity.resolve("mu2epro")
     i = identity.resolve("mu2epro", confirm=True)
     assert i.owner == "mu2e" and i.mine is False and i.production is True
-    assert i.default_publish_location == "tape"
 
 
 def test_a_read_only_use_of_mu2epro_needs_no_confirm():
@@ -48,14 +47,6 @@ def test_production_may_not_ship_a_dev_checkout(monkeypatch):
         i.dev_dir_for_shipping()
     # the rule is about SHIPPING code; a production identity that ships none is fine
     assert i.production is True
-
-
-def test_for_record_reads_the_record_not_the_environment(monkeypatch):
-    class Rec:
-        run_as, owner = "mu2epro", "mu2e"
-    monkeypatch.setenv("BEAMKIT_PRODTOOLS_DIR", "/x")
-    i = identity.for_record(Rec)
-    assert i.mine is False and i.owner == "mu2e" and i.dev_dir is None
 
 
 def test_nersc_site_takes_the_configured_owner():

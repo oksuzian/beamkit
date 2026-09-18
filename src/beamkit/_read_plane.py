@@ -1,11 +1,8 @@
-"""Standalone: dump one ntuple plane from g4bl output files as TSV.
+"""Standalone: dump one ntuple plane from g4bl files as TSV, in argv order.
 
-Runs under the ana interpreter (uproot), never imports beamkit. One line
-per entry: x y z Px Py Pz t as repr(float) so the float32 values survive
-exactly, then PDGid EventID TrackID ParentID as ints (MakeSource.py used
-int() on each). Files are emitted in argv order.
-
-Exit 2: usage. Exit 3: a file lacks NTuple/<plane>.
+Runs under the ana interpreter (uproot), never imports beamkit. x y z Px Py
+Pz t as repr(float) so the float32 values survive exactly, then the four ids
+as ints (MakeSource.py used int()). Exit 2: usage. Exit 3: no NTuple/<plane>.
 """
 import sys
 

@@ -1,8 +1,8 @@
 """A stand-in for the two prodtools MCP servers, run as a REAL stdio child:
 `python -m tests.fake_prodtools_mcp write` or `... read`. Same tool names
 and argument names as prodtools; canned answers; failures on demand via
-environment variables (see docs/plans/2026-09-15-prodtools-over-mcp.md,
-Task 2). The read role envelopes failures as {"error": {...}} the way
+the environment variables below. The read role envelopes failures as
+{"error": {...}} the way
 prodtools' safe_tool does; the write role raises, as prodtools-write does.
 
 Knobs: FAKE_PRODTOOLS_FAIL (comma-separated tool names to trip),

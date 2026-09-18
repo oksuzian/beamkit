@@ -1,8 +1,8 @@
-"""The beamkit tools; server.py registers them with FastMCP as they are, so
+"""The beamkit tools. server.py registers them with FastMCP as they are, so
 every parameter is annotated and `run_as` has no default where a call
 writes. Orchestration only: load the record or build a RunRequest, then
-delegate to `runs.create` or `backends.get(site)` — the backend and the
-run-creation ritual do the work. Every refusal is a BeamkitError."""
+delegate to runs.create or backends.get(site)."""
+import os
 import sys
 from typing import Optional
 
@@ -94,8 +94,11 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
     """A BLTrackFile from whatever nts files the run has: read from SAM and
     built here (site='fermilab'), or built by one Slurm job on Perlmutter
     from the files on CFS (site='nersc', never downloads). No completeness
-    check: pot counts the files that exist. flavor selects the cut table;
-    label names the files and defaults to the flavor."""
+    check: pot = n_files * events_per_job and missing_indices are recorded.
+    flavor "bm" or "ps" selects a preset cut table; any other flavor needs
+    cuts={keep_pdg, drop_pdg, min_p_mev}. label names the files and the SAM
+    artifact and defaults to the flavor. publish=true pushes it to SAM via
+    prodtools push_file, to tape for mu2epro and scratch for self."""
     backend = backends.get(site)
     rec = _load(run_id)
     if rec.site != site:
@@ -109,7 +112,8 @@ def get_server_info() -> dict:
     f_ok, f_detail = fermilab_backend.available()
     n_ok, n_detail = nersc_backend.available()
     return {"name": "beamkit", "version": __version__, "python": sys.executable,
-            "prodtools": bridge.prodtools_info() if f_ok else None, "dev_dir": identity.dev_dir_from_env(),
+            "prodtools": bridge.prodtools_info() if f_ok else None,
+            "dev_dir": os.environ.get(identity.DEV_DIR_VAR) or None,
             "backends": {"fermilab": {"available": f_ok, "detail": f_detail},
                          "nersc": {"available": n_ok, "detail": n_detail,
                                    "config": str(nersc_config.config_path(paths.home()))}},

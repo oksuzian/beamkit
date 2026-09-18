@@ -1,14 +1,9 @@
 """A synchronous handle on one MCP server spawned over stdio.
 
-beamkit's tools are synchronous functions that FastMCP runs on its own
-event loop, so a nested asyncio.run is impossible; the client session
-lives on a private loop in a daemon thread and every call is marshalled
-there. The whole session lifetime runs in ONE task on that loop (anyio
-cancel scopes must be exited by the task that entered them), so start()
-schedules a serve task that opens the transport and the session, signals
-ready, and waits for stop.
-
-Knows nothing about prodtools; bridge.py owns that."""
+A nested asyncio.run is impossible under FastMCP's own loop, so the session
+lives on a private loop in a daemon thread, and its whole lifetime runs in
+ONE task there (anyio cancel scopes must be exited by the task that entered
+them). Knows nothing about prodtools; bridge.py owns that."""
 import asyncio
 import atexit
 import concurrent.futures
@@ -106,11 +101,8 @@ class StdioServer:
     async def _serve(self, ready):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
-        # captured so _teardown can cancel and await the REAL task: the
-        # concurrent.futures.Future from run_coroutine_threadsafe completes
-        # (as cancelled) the instant .cancel() is called, whether or not the
-        # underlying task has actually finished unwinding, so it cannot be
-        # used to wait for the child process to actually be killed
+        # captured so _teardown can cancel and await the REAL task; the
+        # run_coroutine_threadsafe future cannot be waited on for that
         self._task = asyncio.current_task()
         self._stop = asyncio.Event()
         params = StdioServerParameters(command=self.command, args=self.args, env=self.env)
@@ -135,8 +127,8 @@ class StdioServer:
             self.tools = {}
 
     def _stderr_tee(self):
-        """A pipe the child writes to; a pump thread keeps the last lines
-        and forwards everything to our stderr."""
+        """A pipe the child writes to; a pump thread keeps the last lines and
+        forwards everything to our stderr."""
         r, w = os.pipe()
 
         def pump():
@@ -168,14 +160,11 @@ class StdioServer:
         self.tools = {}
         task = self._task
         if task is not None and not task.done():
-            # cancelling the concurrent.futures.Future from run_coroutine_threadsafe
-            # completes it (as cancelled) the instant .cancel() is called, whether or
-            # not the real asyncio task has actually unwound yet, so waiting on IT
-            # gives no synchronization at all. Instead, schedule a coroutine on the
-            # server's own loop that cancels the real task and awaits it, and wait
-            # for THAT to finish, so stdio_client's shutdown (close stdin, wait,
-            # then SIGTERM/SIGKILL) has actually run before we stop the loop out
-            # from under it and the child is left running.
+            # cancelling the run_coroutine_threadsafe future completes it at once,
+            # before the real task has unwound, so it gives no synchronization.
+            # Cancel and await the real task ON ITS OWN LOOP instead, so
+            # stdio_client's shutdown (close stdin, wait, SIGTERM/SIGKILL) has run
+            # before the loop is stopped out from under it and the child survives.
             async def _cancel_and_wait():
                 task.cancel()
                 try:

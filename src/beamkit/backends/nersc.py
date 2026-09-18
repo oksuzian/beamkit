@@ -8,10 +8,16 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from beamkit import (BeamkitError, beamfile, identity, iri, naming, nersc_cnf, nersc_config,
-                     nersc_templates, paths, records)
+                     nersc_templates, paths, records, sfapi)
 
 WALLTIME_DEFAULT = 172800
 CUSTOM_ATTRIBUTES = {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}
+SUBMITTABLE = ("created", "partially_submitted")
+TERMINAL = ("completed", "failed", "canceled")
+MISSING_CAP = 50
+FETCH_KINDS = ("nts", "beamfiles")
+SIDECAR_KEYS = ("sha256", "size", "rows", "rows_in", "dropped", "pot", "n_files", "missing_indices")
+_CACHE = {}          # (nersc.toml path, mtime_ns) -> config; config -> its client
 
 
 @dataclass
@@ -65,32 +71,25 @@ def job_spec(cfg, *, run_id, run_dir, offset, count, duration) -> dict:
     }
 
 
-def make_client(cfg):
-    """The transport named in nersc.toml; both expose the same methods."""
-    if cfg.transport == "sfapi":
-        from beamkit import sfapi
-        return sfapi.SfapiClient(cfg)
-    return iri.IriClient(cfg)
-
-
-_CACHE = {}          # (nersc.toml path, mtime) -> [cfg, client or None]
-
-
-def _entry() -> list:
-    """nersc.toml as loaded, kept per (path, mtime): repeated tool calls in
+def config():
+    """nersc.toml as loaded, kept per (path, mtime_ns): repeated tool calls in
     one server process re-read no config. A different BEAMKIT_HOME, or an
-    edited file, is a miss."""
+    edited file, is a miss. A missing file is refused here."""
     home = paths.home()
     path = nersc_config.config_path(home)
     key = (str(path), path.stat().st_mtime_ns) if path.is_file() else None
     if key not in _CACHE:
-        _CACHE[key] = [nersc_config.load(home), None]      # a missing file is refused here
+        _CACHE[key] = nersc_config.load(home)
     return _CACHE[key]
 
 
-def config():
-    """The config alone, for the refusals that come before any client exists."""
-    return _entry()[0]
+def client():
+    """The transport named in nersc.toml, one client per config, so the
+    session and its token outlive the tool call that created them."""
+    cfg = config()
+    if cfg not in _CACHE:
+        _CACHE[cfg] = sfapi.SfapiClient(cfg) if cfg.transport == "sfapi" else iri.IriClient(cfg)
+    return _CACHE[cfg]
 
 
 def available() -> tuple:
@@ -103,36 +102,11 @@ def available() -> tuple:
     return True, f"account {cfg.account}, base_dir {cfg.base_dir}, owner {cfg.owner} ({cfg_path})"
 
 
-def _cfg_client():
-    """(config, client): one client per config, so the session and its
-    token outlive the tool call that created them."""
-    entry = _entry()
-    if entry[1] is None:
-        entry[1] = make_client(entry[0])
-    return entry[0], entry[1]
-
-
-SUBMITTABLE = ("created", "partially_submitted")
-TERMINAL = ("completed", "failed", "canceled")
-MISSING_CAP = 50
-
-
 def run_dir(cfg, run_id) -> str:
     return f"{cfg.base_dir}/runs/{run_id}"
 
 
-def _remote_layout(cfg, client, rd, uploads):
-    """The API's mkdir is not -p: build every component from cfg.base_dir
-    down (base_dir, base_dir/runs, the run dir, then its subdirs) in
-    order, since a fresh base_dir has neither yet."""
-    for d in (cfg.base_dir, f"{cfg.base_dir}/runs", rd, f"{rd}/out", f"{rd}/slurm", f"{rd}/beamfiles"):
-        if not client.exists(d):
-            client.mkdir(d)
-    for local, remote in uploads:
-        client.upload(local, remote)
-
-
-def _submit_missing(rec, cfg, client, runs_dir):
+def _submit_missing(rec, cfg, cl, runs_dir):
     """Submit every slice whose offset the record does not carry, in order.
     Slicing is by the record's own slice_size (fixed at create time), not
     cfg.procs_per_node: an operator lowering procs_per_node between a
@@ -149,18 +123,16 @@ def _submit_missing(rec, cfg, client, runs_dir):
     for k, (offset, count) in enumerate(todo, start=len(have)):
         spec = job_spec(cfg, run_id=rec.run_id, run_dir=rd, offset=offset, count=count, duration=dur)
         try:
-            jid = client.submit(spec)
+            jid = cl.submit(spec)
         except Exception as e:
-            rec.state, rec.error = "partially_submitted", (
-                f"job {k} of {total} (offset {offset}) failed to submit: {e}; check squeue for "
-                f"beamkit.{rec.run_id}.{offset} before submit_run")
+            why = (f"job {k} of {total} (offset {offset}) failed to submit: {e}; check squeue for "
+                   f"beamkit.{rec.run_id}.{offset} before submit_run")
+            rec.state, rec.error = "partially_submitted", why
             records.save(rec, runs_dir)
-            raise BeamkitError(f"run {rec.run_id}: job {k} of {total} (offset {offset}) failed to submit: {e}; "
-                               f"check squeue for beamkit.{rec.run_id}.{offset} before submit_run; "
-                               f"{len(rec.block.jobs)} job(s) are running; submit_run({rec.run_id!r}, "
-                               f"'self') submits the rest") from e
+            raise BeamkitError(f"run {rec.run_id}: {why}; {len(rec.block.jobs)} job(s) are running; "
+                               f"submit_run({rec.run_id!r}, 'self') submits the rest") from e
         rec.block.jobs.append({"slurm_id": jid, "offset": offset, "count": count,
-                                  "submitted": records.now_utc()})
+                               "submitted": records.now_utc()})
         records.save(rec, runs_dir)
     rec.state, rec.error = "submitted", None
     records.save(rec, runs_dir)
@@ -191,7 +163,7 @@ def taken(ident, tag):
     exists on CFS, unless a retryable local record explains that directory
     (a failed layout of our own): probing that as taken would burn a new
     dsconf and orphan the enqueue_failed record."""
-    cfg, client = _cfg_client()
+    cfg, cl = config(), client()
     runs_dir = paths.runs_dir()
 
     def probe(cnf_name):
@@ -199,7 +171,7 @@ def taken(ident, tag):
         rec = records.try_load(run_id, runs_dir)
         if rec is not None and retryable(rec):
             return False
-        return client.exists(run_dir(cfg, run_id))
+        return cl.exists(run_dir(cfg, run_id))
     return probe
 
 
@@ -215,7 +187,7 @@ def new_block(req, ident, pin, run_id, dsconf):
 
 def enqueue(rec, req, ident, pin, rdir):
     """The cnf, job.sh and inner.sh built here and laid out on CFS."""
-    cfg, client = _cfg_client()
+    cfg, cl = config(), client()
     rd, cnf_name = rec.block.run_dir, rec.block.cnf
     local_cnf = rdir / cnf_name
     local_cnf.unlink(missing_ok=True)
@@ -226,8 +198,14 @@ def enqueue(rec, req, ident, pin, rdir):
     (rdir / "inner.sh").write_text(nersc_templates.render_inner(
         cfg, run_id=rec.run_id, run_dir=rd, owner=ident.owner, tag=rec.tag, dsconf=rec.dsconf,
         events_per_job=req.events_per_job, main_input=req.main_input, params=req.params))
-    _remote_layout(cfg, client, rd, [(local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
-                                     (rdir / "inner.sh", f"{rd}/inner.sh")])
+    # the API's mkdir is not -p: build every component from cfg.base_dir down,
+    # since a fresh base_dir has neither it nor base_dir/runs yet
+    for d in (cfg.base_dir, f"{cfg.base_dir}/runs", rd, f"{rd}/out", f"{rd}/slurm", f"{rd}/beamfiles"):
+        if not cl.exists(d):
+            cl.mkdir(d)
+    for src, remote in ((local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
+                        (rdir / "inner.sh", f"{rd}/inner.sh")):
+        cl.upload(src, remote)
 
 
 def after_failure(rec, ident) -> str:
@@ -235,22 +213,20 @@ def after_failure(rec, ident) -> str:
 
 
 def submit(rec, ident, confirm):
-    cfg, client = _cfg_client()
-    _submit_missing(rec, cfg, client, paths.runs_dir())
+    _submit_missing(rec, config(), client(), paths.runs_dir())
 
 
 def submit_run(rec, run_as) -> dict:
-    cfg, client = _cfg_client()
+    cfg, cl = config(), client()
     identity.resolve(run_as, site="nersc", owner=cfg.owner)
-    runs_dir = paths.runs_dir()
     run_id = rec.run_id
     if rec.state not in SUBMITTABLE:
         raise BeamkitError(f"run {run_id} is in state {rec.state!r}; submit_run applies to {SUBMITTABLE}")
     rd = rec.block.run_dir
-    if not client.exists(f"{rd}/inner.sh"):
+    if not cl.exists(f"{rd}/inner.sh"):
         raise BeamkitError(f"run {run_id}: remote layout at {rd} is missing inner.sh (job.sh cannot run); "
                            f"run run_beamline again")
-    _submit_missing(rec, cfg, client, runs_dir)
+    _submit_missing(rec, cfg, cl, paths.runs_dir())
     return rec.to_dict()
 
 
@@ -259,14 +235,14 @@ def make_recoveries(rec, run_as, confirm) -> dict:
                        f"the missing indices)")
 
 
-def _nts_entries(client, rec) -> tuple:
+def _nts_entries(cl, rec) -> tuple:
     """One ls of out/: the run's nts files by job index, and how many logs
     sit beside them. A run that failed before its remote layout was ever
     created (e.g. the cnf itself exceeded the upload cap) has no out/ dir
     yet -- that is zero files, not an error, same as client.exists()."""
     rd = rec.block.run_dir
     try:
-        entries = client.ls(f"{rd}/out")
+        entries = cl.ls(f"{rd}/out")
     except iri.IriError as e:
         if "No such file" not in (e.detail or str(e)):
             raise
@@ -284,58 +260,51 @@ def _nts_entries(client, rec) -> tuple:
     return files, logs
 
 
-def out_counts(client, rec) -> dict:
-    files, logs = _nts_entries(client, rec)
+def out_counts(cl, rec) -> dict:
+    files, logs = _nts_entries(cl, rec)
     missing = sorted(set(range(rec.njobs)) - {f["index"] for f in files})
     return {"expected": rec.njobs, "nts": len(files), "logs": logs, "missing": missing[:MISSING_CAP],
             "nts_files": [f["name"] for f in files]}
-
-
-def _job_status(client, job):
-    st = client.status(job["slurm_id"])
-    md = st.get("meta_data") or {}
-    return {"slurm_id": job["slurm_id"], "offset": job["offset"], "count": job["count"],
-            "state": st["state"], "exit_code": st.get("exit_code"),
-            "elapsed": md.get("elapsed"), "node": md.get("nodelist")}
 
 
 def status(rec) -> dict:
     """Slurm state per job and one ls of out/. Sets the run state:
     complete / short once every job is terminal, submitted otherwise.
     created and partially_submitted are left as they are."""
-    cfg, client = _cfg_client()
-    jobs = [_job_status(client, j) for j in rec.block.jobs]
-    outs = out_counts(client, rec)
+    cl = client()
+    jobs = []
+    for j in rec.block.jobs:
+        st = cl.status(j["slurm_id"])
+        md = st.get("meta_data") or {}
+        jobs.append({"slurm_id": j["slurm_id"], "offset": j["offset"], "count": j["count"],
+                     "state": st["state"], "exit_code": st.get("exit_code"),
+                     "elapsed": md.get("elapsed"), "node": md.get("nodelist")})
+    outs = out_counts(cl, rec)
     if rec.state in ("submitted", "short", "complete") and jobs:
         if all(j["state"] in TERMINAL for j in jobs):
             rec.state = "complete" if outs["nts"] == outs["expected"] else "short"
         else:
             rec.state = "submitted"
-    _refresh_beamfiles(client, rec)
+    _refresh_beamfiles(cl, rec)
     records.save(rec, paths.runs_dir())
     return {"jobs": jobs, "outputs": outs, "beamfiles": list(rec.beamfiles)}
 
 
 def outputs(rec) -> dict:
     """A run with no out/ dir on CFS yet has no outputs, not an error."""
-    cfg, client = _cfg_client()
-    rd = rec.block.run_dir
-    files, _ = _nts_entries(client, rec)
-    return {"run_id": rec.run_id, "run_dir": rd, "n_files": len(files),
+    files, _ = _nts_entries(client(), rec)
+    return {"run_id": rec.run_id, "run_dir": rec.block.run_dir, "n_files": len(files),
             "total_size": sum(f["size"] for f in files), "files": files, "beamfiles": list(rec.beamfiles)}
 
 
-FETCH_KINDS = ("nts", "beamfiles")
-
-
-def _fetch_list(client, rec, kind) -> list[dict]:
+def _fetch_list(cl, rec, kind) -> list[dict]:
     if kind == "nts":
         return outputs(rec)["files"]
     files = []
     for bf in rec.beamfiles:
         if bf.get("state") != "complete":
             continue
-        entry = client.ls(bf["path"])
+        entry = cl.ls(bf["path"])
         if len(entry) != 1:
             raise BeamkitError(f"run {rec.run_id}: beam file {bf['path']} is not one file on CFS ({len(entry)} entries)")
         files.append({"name": bf["path"].rsplit("/", 1)[-1], "label": bf["label"],
@@ -353,8 +322,8 @@ def fetch_outputs(rec, dest, kind) -> dict:
     to a temporary name and renamed once its size matches CFS."""
     if kind not in FETCH_KINDS:
         raise BeamkitError(f"kind must be one of {FETCH_KINDS}, got {kind!r}")
-    cfg, client = _cfg_client()
-    files = _fetch_list(client, rec, kind)
+    cl = client()
+    files = _fetch_list(cl, rec, kind)
     big = [f for f in files if f["size"] > iri.DOWNLOAD_MAX]
     if big:
         names = ", ".join(f"{f['name']} ({f['size']} bytes)" for f in big[:5])
@@ -370,7 +339,7 @@ def fetch_outputs(rec, dest, kind) -> dict:
             f.update(local=str(local), status="present")
             skipped += 1
             continue
-        data = client.download_bytes(f["path"])
+        data = cl.download_bytes(f["path"])
         if len(data) != f["size"]:
             raise BeamkitError(f"run {rec.run_id}: {f['name']} is {f['size']} bytes on CFS "
                                f"but {len(data)} bytes came back; nothing written")
@@ -384,20 +353,13 @@ def fetch_outputs(rec, dest, kind) -> dict:
             "files": files}
 
 
-BEAMFILE_WALLTIME_CAP = 4 * 3600
-
-
-def beamfile_duration(n_nts) -> int:
-    return min(BEAMFILE_WALLTIME_CAP, 600 + 2 * int(n_nts))
-
-
 def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location, confirm) -> dict:
     if location is not None:
         raise BeamkitError("location applies to site='fermilab' publishing only")
     if publish:
         raise BeamkitError("publish=True on a NERSC run: publishing is part of harvest, which runs at Fermilab; "
                            "build with publish=False")
-    cfg, client = _cfg_client()
+    cfg, cl = config(), client()
     identity.resolve(run_as, site="nersc", owner=cfg.owner)
     label = flavor if label is None else label
     resolved = beamfile.resolve_cuts(flavor, cuts)
@@ -407,7 +369,7 @@ def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location,
     if any(b["label"] == label for b in rec.beamfiles):
         raise BeamkitError(f"run {run_id}: label {label!r} is already spent by a submitted beam-file job; "
                            f"a beam file is never overwritten (pick another label)")
-    counts = out_counts(client, rec)
+    counts = out_counts(cl, rec)
     if counts["nts"] == 0:
         raise BeamkitError(f"run {run_id}: 0 of {counts['expected']} nts files on CFS "
                            f"({counts['logs']} logs); nothing to build a beam file from")
@@ -421,40 +383,36 @@ def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location,
         run_dir=rd, owner=rec.owner, tag=rec.tag, dsconf=rec.dsconf, events_per_job=rec.events_per_job,
         njobs=rec.njobs, plane=plane, label=label, flavor=flavor, cuts=resolved))
     job_sh.write_text(nersc_templates.render_beamfile_sh(cfg, job_py=f"{rd}/beamfiles/{job_py.name}"))
-    client.upload(job_py, f"{rd}/beamfiles/{job_py.name}")
-    client.upload(job_sh, f"{rd}/beamfiles/{job_sh.name}")
+    cl.upload(job_py, f"{rd}/beamfiles/{job_py.name}")
+    cl.upload(job_sh, f"{rd}/beamfiles/{job_sh.name}")
+    # one process, 10 min plus 2 s per nts file to read, capped at 4 h
     spec = job_spec(cfg, run_id=rec.run_id, run_dir=rd, offset=0, count=1,
-                    duration=beamfile_duration(counts["nts"]))
+                    duration=min(4 * 3600, 600 + 2 * counts["nts"]))
     spec["name"] = f"beamkit.{rec.run_id}.beamfile.{label}"
     spec["arguments"] = [f"{rd}/beamfiles/{job_sh.name}"]
     spec["stdout_path"], spec["stderr_path"] = f"{rd}/slurm/beamfile.{label}.out", f"{rd}/slurm/beamfile.{label}.err"
     spec["environment"] = {}
-    jid = client.submit(spec)
     entry = {"run_id": run_id, "flavor": flavor, "label": label, "cuts": resolved, "plane": plane,
-             "slurm_id": jid, "state": "submitted", "exit_code": None, "n_files_at_submit": counts["nts"],
-             "path": stem + ".txt", "sidecar": stem + ".json", "sha256": None, "size": None, "rows": None,
-             "rows_in": None, "dropped": None, "pot": None, "n_files": None, "missing_indices": None,
-             "sam_name": None, "location": None, "created": records.now_utc()}
+             "slurm_id": cl.submit(spec), "state": "submitted", "exit_code": None,
+             "n_files_at_submit": counts["nts"], "path": stem + ".txt", "sidecar": stem + ".json",
+             **dict.fromkeys((*SIDECAR_KEYS, "sam_name", "location")), "created": records.now_utc()}
     rec.beamfiles.append(entry)
     records.save(rec, runs_dir)
     return entry
 
 
-SIDECAR_KEYS = ("sha256", "size", "rows", "rows_in", "dropped", "pot", "n_files", "missing_indices")
-
-
-def _refresh_beamfiles(client, rec) -> None:
+def _refresh_beamfiles(cl, rec) -> None:
     """Beam-file jobs still 'submitted': read Slurm; on a terminal state
     read the sidecar and copy its numbers in, or record the failure."""
     for bf in rec.beamfiles:
         if bf.get("state") != "submitted":
             continue
-        st = client.status(bf["slurm_id"])
+        st = cl.status(bf["slurm_id"])
         if st["state"] not in TERMINAL:
             continue
         bf["exit_code"] = st.get("exit_code")
         try:
-            side = json.loads(client.download(bf["sidecar"]))
+            side = json.loads(cl.download(bf["sidecar"]))
         except (iri.IriError, ValueError):
             bf["state"] = "failed"
             continue

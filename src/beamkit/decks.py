@@ -79,20 +79,16 @@ def materialize(url: str, ref: str, cache_dir: Path) -> DeckPin:
         raise
     try:
         part.rename(dest)
-    except OSError as exc:
+    except OSError as exc:      # a concurrent materialize may have won the slot
         head = None
         try:
-            if dest.is_dir():
-                head = _git("rev-parse", "HEAD", cwd=dest)
+            head = _git("rev-parse", "HEAD", cwd=dest) if dest.is_dir() else None
         except DeckError:
-            head = None
-        finally:
-            shutil.rmtree(part, ignore_errors=True)
-        if head == sha:
-            return DeckPin(url, ref, sha, str(dest), True)
-        raise DeckError(
-            f"could not place deck {sha} at {dest}: {exc}; "
-            f"{dest} holds {head or 'no git checkout'}") from exc
+            pass
+        shutil.rmtree(part, ignore_errors=True)
+        if head != sha:         # it holds something else, or nothing
+            raise DeckError(f"could not place deck {sha} at {dest}: {exc}; "
+                            f"{dest} holds {head or 'no git checkout'}") from exc
     return DeckPin(url, ref, sha, str(dest), True)
 
 
@@ -112,7 +108,7 @@ def pin(deck_ref, deck_dir, deck_url, cache_dir, production) -> DeckPin:
 
 
 def inspect_local(dir) -> DeckPin:
-    """A development deck: recorded as it is, dirty or not, never refused."""
+    """A development deck: recorded as it is, dirty or not."""
     d = Path(dir)
     if not d.is_dir():
         raise DeckError(f"deck_dir {dir} is not a directory")

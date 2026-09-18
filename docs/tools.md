@@ -86,9 +86,9 @@ burning the next dsconf.
 `run_as` is required on every mutating tool and passed through
 unchanged: beamkit adds no gate of its own and removes none. Everything
 `run_as` implies — the owner in every name, which ledger, whether
-`confirm` is needed, the default publish location, whether a dev
-prodtools checkout (`BEAMKIT_PRODTOOLS_DIR`) may ship to the workers —
-is decided in one module, `identity.py`.
+`confirm` is needed, whether a dev prodtools checkout
+(`BEAMKIT_PRODTOOLS_DIR`) may ship to the workers — is decided in one
+module, `identity.py`.
 `outloc="disk"` (`/mu2e/persistent/datasets`) needs
 `run_as="mu2epro"`: no other account has `storage.modify` there, so a
 self run would finish g4bl on every worker and then 403 in `pushOutput`.

@@ -51,8 +51,8 @@ class RunRecord:
     error: str | None = None
 
     def to_dict(self) -> dict:
-        """The block travels under its site's name, so run.json says
-        "fermilab": {...} or "nersc": {...}, never "block"."""
+        """The block travels under its site's name: "fermilab": {...} or
+        "nersc": {...}, never "block"."""
         d = asdict(self)
         d[self.site] = d.pop("block")
         return d
@@ -100,8 +100,7 @@ def load(run_id, runs_dir) -> RunRecord:
 
 
 def try_load(run_id, runs_dir) -> RunRecord | None:
-    """The record, or None when there is none to read: for the callers that
-    ask a question about a run dir rather than open one."""
+    """The record, or None when there is none to read."""
     try:
         return load(run_id, runs_dir)
     except RecordError:
@@ -110,12 +109,10 @@ def try_load(run_id, runs_dir) -> RunRecord | None:
 
 def claim_run_dir(runs_dir, run_id, retryable) -> Path:
     """The local run dir of a new run, created. A run id is never reused, so
-    an existing dir with a record is refused unless `retryable(run_id,
-    runs_dir)` says the previous attempt created nothing anywhere else and
-    may be overwritten in place. A dir with no run.json is claimable
-    outright, the predicate is never consulted: the record is written
-    before any remote effect, so a dir with no record corresponds to
-    nothing anywhere else."""
+    a dir with a record is refused unless `retryable(run_id, runs_dir)` says
+    the previous attempt created nothing anywhere else. A dir with no
+    run.json is claimable outright: the record is written before any remote
+    effect, so it corresponds to nothing anywhere else."""
     d = run_dir(runs_dir, run_id)
     if d.exists() and (d / "run.json").is_file() and not retryable(run_id, runs_dir):
         raise BeamkitError(f"run dir {d} already exists; a run id is never reused")

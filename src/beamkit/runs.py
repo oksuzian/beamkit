@@ -1,8 +1,7 @@
-"""Run creation, once. The ritual of the spec's §5.2: every caller value is
-refused before the deck fetch and the site probe (a refused call burns no
-dsconf and writes no record); the record is saved before the first remote
-effect; an enqueue that fails leaves an enqueue_failed record the next
-call may overwrite. The site's part is the backend's eight hooks."""
+"""Run creation, once. Every caller value is refused before the deck fetch
+and the site probe (a refused call burns no dsconf and writes no record);
+the record is saved before the first remote effect; a failed enqueue leaves
+an enqueue_failed record the next call may overwrite."""
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -12,9 +11,8 @@ from beamkit.decks import DEFAULT_DECK_URL
 
 @dataclass(frozen=True)
 class RunRequest:
-    """Every caller value of run_beamline. slice_size is Fermilab's,
-    walltime_s is NERSC's; the backend refuses the other's and fills
-    its own default in validate()."""
+    """Every caller value of run_beamline. slice_size is Fermilab's and
+    walltime_s NERSC's; each backend refuses the other's in validate()."""
     tag: str
     run_as: str
     site: str = "fermilab"

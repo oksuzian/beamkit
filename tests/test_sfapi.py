@@ -1,6 +1,6 @@
 import pytest
 
-from beamkit import BeamkitError, iri, nersc_config, sfapi
+from beamkit import BeamkitError, iri, sfapi
 from beamkit.backends import nersc
 from beamkit.nersc_config import NerscConfig
 from tests.fake_sfapi import FakeSfapiSession
@@ -155,10 +155,13 @@ def test_failed_submit_is_an_irierror(client, cfg):
         client.submit(spec)
 
 
-def test_make_client_picks_transport(cfg):
+def test_client_picks_transport(cfg, monkeypatch):
     from dataclasses import replace
-    assert isinstance(nersc.make_client(cfg), sfapi.SfapiClient)
-    assert isinstance(nersc.make_client(replace(cfg, transport="iri")), iri.IriClient)
+    nersc._CACHE.clear()
+    monkeypatch.setattr(nersc, "config", lambda: cfg)
+    assert isinstance(nersc.client(), sfapi.SfapiClient)
+    monkeypatch.setattr(nersc, "config", lambda: replace(cfg, transport="iri"))
+    assert isinstance(nersc.client(), iri.IriClient)
 
 
 # --- the whole NERSC backend on the sfapi transport
@@ -185,7 +188,7 @@ def sfapi_fake(monkeypatch, beamkit_home, tmp_path):
         f'api = "https://api.iri.nersc.gov/api/v2"\nsfapi_dir = "{sf}"\naccount = "m4599"\n'
         f'base_dir = "{BASE}"\nqos = "debug"\nowner = "u"\nprocs_per_node = 128\ntransport = "sfapi"\n')
     s = FakeSfapiSession()
-    monkeypatch.setattr(nersc, "make_client", lambda cfg: sfapi.SfapiClient(cfg, token_provider=lambda: "tok", session=s))
+    monkeypatch.setattr(nersc, "client", lambda: sfapi.SfapiClient(nersc.config(), token_provider=lambda: "tok", session=s))
     monkeypatch.setattr(decks, "materialize", lambda url, ref, cache: decks.DeckPin(url, ref, SHA, str(deck), True))
     return s
 

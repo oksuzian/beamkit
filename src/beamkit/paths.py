@@ -8,8 +8,7 @@ FERMILAB_USERS = Path("/exp/mu2e/data/users")
 
 def home() -> Path:
     """BEAMKIT_HOME; else the Fermilab per-user data dir when that tree
-    exists on this host (existing runs stay where they are); else
-    ~/.beamkit. One directory check, no probing beyond it."""
+    exists here (existing runs stay where they are); else ~/.beamkit."""
     env = os.environ.get("BEAMKIT_HOME")
     if env:
         return Path(env)

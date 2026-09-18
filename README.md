@@ -51,4 +51,3 @@ until G4BeamlineScripts carries that parameter itself.
   records, `run_as` and privilege, recoveries, beam-file cuts.
 - [docs/architecture.md](docs/architecture.md): modules and data flow.
 - [docs/developing.md](docs/developing.md): dev venv, test suite, the prodtools contract test.
-- [docs/specs/](docs/specs/): the design documents.

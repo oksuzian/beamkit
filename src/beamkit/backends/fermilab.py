@@ -1,11 +1,11 @@
 """The Fermilab backend: a run is a prodtools campaign, driven through
-bridge.py. This module carries the Fermilab half of every tool (the
-interface in docs/specs/2026-09-17-backend-seam-design.md §6)."""
+bridge.py. Carries the Fermilab half of every tool, and the eight hooks
+runs.create calls."""
 import json
+import os
 from dataclasses import dataclass, field, replace
 
-from beamkit import (BeamkitError, beamfile, bridge, compose, identity, naming, paths, publishing,
-                     records)
+from beamkit import BeamkitError, beamfile, bridge, compose, identity, naming, paths, records
 
 SLICE_MAX = 10000
 
@@ -21,9 +21,7 @@ class Block:
 
 def _outloc(outloc, ident):
     """beamkit holds the output location and the account at the same moment,
-    so it can refuse the pair prodtools only discovers on the worker.
-    Membership in OUTLOCS is compose.validate_inputs' rule; this is the
-    one that needs the identity."""
+    so it can refuse the pair prodtools only discovers on the worker."""
     if outloc == "disk" and not ident.production:
         raise BeamkitError("outloc='disk' is /mu2e/persistent/datasets, where only mu2epro has "
                            "storage.modify: every worker would run g4bl to completion and then 403 in "
@@ -38,47 +36,32 @@ def _slice_size(slice_size, njobs):
     return slice_size
 
 
-def _summary(output, n=5):
-    lines = [l for l in (output or "").splitlines() if l.strip()]
-    return "\n".join(lines[-n:])
-
-
-def _dataset(rec):
-    return naming.dataset(rec.owner, rec.tag, rec.dsconf)
-
-
 def _after_failed_push(rec, ident) -> str:
     """What a failed push_cnf left behind, and what the record should say.
 
     prodtools' _ENQUEUE_RECOVERY: the cnf may have reached SAM, and the
-    campaign may have been created, before the error. Probe both. A cnf in
-    SAM with its campaign in the ledger is a run that exists -- adopt the
-    campaign into the record (state 'created') so make_recoveries submits
-    it, instead of burning the dsconf and orphaning the campaign. A cnf in
-    SAM with no campaign is a burned dsconf; a cnf not in SAM leaves the
-    dsconf free and the run dir retryable in place."""
+    campaign may have been created, before the error, so probe both. A cnf
+    in SAM with its campaign in the ledger is a run that exists -- adopt it
+    rather than burn the dsconf and orphan the campaign."""
     name = naming.cnf_name(rec.owner, rec.tag, rec.dsconf)
     try:
         landed = bridge.cnf_exists(name)
     except Exception as e:
-        return (f"; whether {name} reached SAM could not be determined "
-                f"({type(e).__name__}: {e}), so check SAM before retrying")
+        return f"; whether {name} reached SAM could not be determined ({e}); check SAM before retrying"
     if not landed:
-        return (f"; {name} is not in SAM, so the dsconf {rec.dsconf!r} is free and this call can be "
-                f"retried once the cause is fixed")
+        return f"; {name} is not in SAM, so the dsconf {rec.dsconf!r} is free: retry once the cause is fixed"
     try:
         camps = bridge.campaigns(mine=ident.mine)
     except Exception as e:
-        return (f"; {name} is in SAM, so the dsconf {rec.dsconf!r} is burned, but the ledger could not "
-                f"be read ({type(e).__name__}: {e}): check `submissions status` for a campaign on it "
-                f"before retrying")
+        return (f"; {name} is in SAM, so the dsconf {rec.dsconf!r} is burned, but the ledger could not be "
+                f"read ({e}): check `submissions status` for a campaign on it before retrying")
     camp = next((c for c in camps if c.get("tarball") == name), None)
     if camp is None:
         return (f"; {name} is in SAM with no campaign, so the dsconf {rec.dsconf!r} is burned and the "
                 f"next call allocates the next suffix")
     rec.block.campaign_id, rec.block.tarball, rec.state = camp["id"], name, "created"
-    return (f"; {name} is in SAM and campaign {camp['id']} exists for it, so the record now carries "
-            f"that campaign in state 'created' and nothing was submitted: "
+    return (f"; {name} is in SAM and campaign {camp['id']} exists for it, so the record now carries it in "
+            f"state 'created' and nothing was submitted: "
             f"make_recoveries({rec.run_id!r}, {ident.run_as!r}) submits it")
 
 
@@ -93,7 +76,7 @@ def _tick_into(rec, run_as, confirm, runs_dir, failure, campaign_id):
         records.save(rec, runs_dir)
         raise BeamkitError(f"{failure}: {e}") from e
     rec.block.ticks.append({"when": records.now_utc(), "rc": t["rc"], "needs_attention": t["needs_attention"],
-                      "summary": _summary(t["output"])})
+                            "summary": "\n".join([l for l in (t["output"] or "").splitlines() if l.strip()][-5:])})
     rec.error = None
     rec.state = "needs_attention" if t["needs_attention"] else "submitted"
     records.save(rec, runs_dir)
@@ -110,6 +93,41 @@ def _campaign(campaign_id, mine) -> dict:
     raise BeamkitError(f"campaign {campaign_id} is not in the {'personal' if mine else 'production'} ledger")
 
 
+def _publish_ready(location) -> None:
+    """Everything a publish needs that is knowable before the build.
+    Discovering it afterwards costs hours of dCache reads and throws the
+    built beam file away."""
+    if location not in compose.OUTLOCS:
+        raise BeamkitError(f"location must be one of {compose.OUTLOCS}, got {location!r}")
+    if not bridge.push_file_available():
+        raise BeamkitError("this prodtools has no push_file tool, so publish=True cannot succeed; "
+                           "make_beamfile works with publish=False only until prodtools-write "
+                           "gains push_file")
+
+
+def _publish(out_txt, staged, location, parents, run_as, confirm, push=None) -> None:
+    """Hard-link the built file to its SAM name and push it.
+
+    On any failure discard only what THIS call created: the link, if this
+    call made it, and the built file. An os.link that failed because the
+    staged name already existed left someone else's file behind it, and
+    that file survives. Nothing new remains, so a retry is not blocked."""
+    push = push or bridge.push_file
+    linked = False
+    try:
+        os.link(out_txt, staged)
+        linked = True
+        push(staged, location, list(parents), run_as, confirm)
+    except Exception as e:
+        for p in ((staged,) if linked else ()) + (out_txt,):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        raise BeamkitError(f"beam file discarded: publish failed and left nothing new behind, so it can "
+                           f"be retried: {e}") from e
+
+
 def available() -> tuple:
     return bridge.availability()
 
@@ -119,12 +137,13 @@ def status(rec):
     exists (enqueue_failed before the cnf reached SAM)."""
     if rec.block.campaign_id is None:
         return None
-    return bridge.campaign_status(rec.block.campaign_id, mine=identity.for_record(rec).mine)
+    mine = identity.Identity(rec.run_as, rec.owner, None).mine
+    return bridge.campaign_status(rec.block.campaign_id, mine=mine)
 
 
 def outputs(rec) -> dict:
     """Files of the run's nts dataset in dCache, via SAM."""
-    dataset = _dataset(rec)
+    dataset = naming.dataset(rec.owner, rec.tag, rec.dsconf)
     files = bridge.dataset_files(dataset, rec.outloc)
     return {"run_id": rec.run_id, "dataset": dataset, "location": rec.outloc,
             "n_files": len(files), "total_size": sum(f["size"] for f in files), "files": files}
@@ -146,24 +165,23 @@ def make_recoveries(rec, run_as, confirm) -> dict:
     run's rows and its top-up feeds every other active campaign in the
     ledger. The result names which form ran."""
     ident = identity.resolve(run_as, confirm)
-    run_id = rec.run_id
-    if rec.block.campaign_id is None:
+    run_id, cid = rec.run_id, rec.block.campaign_id
+    if cid is None:
         raise BeamkitError(f"run {run_id} has no campaign (state {rec.state!r}); nothing to recover")
     if ident.run_as != rec.run_as:
         raise BeamkitError(f"run {run_id} lives in the run_as={rec.run_as!r} ledger; tick it as that identity")
-    camp = _campaign(rec.block.campaign_id, mine=ident.mine)
+    camp = _campaign(cid, mine=ident.mine)
     scoped = camp["state"] == "active"
     t = _tick_into(rec, run_as, confirm, paths.runs_dir(),
-                   failure=f"run {run_id}: tick of campaign {rec.block.campaign_id} failed",
-                   campaign_id=rec.block.campaign_id if scoped else None)
-    return {"run_id": run_id, "campaign_id": rec.block.campaign_id, "campaign_state": camp["state"],
+                   failure=f"run {run_id}: tick of campaign {cid} failed",
+                   campaign_id=cid if scoped else None)
+    return {"run_id": run_id, "campaign_id": cid, "campaign_state": camp["state"],
             "rc": t["rc"], "needs_attention": t["needs_attention"], "output": t["output"],
             "tick_scope": "campaign" if scoped else "ledger",
             "note": ("the verify/recovery pass covered every active campaign in this ledger, not only this run"
                      if scoped else
-                     f"campaign {rec.block.campaign_id} is {camp['state']!r}, so this was the bare tick: the "
-                     f"verify/recovery pass reached its rows and the top-up fed every active campaign in "
-                     f"this ledger")}
+                     f"campaign {cid} is {camp['state']!r}, so this was the bare tick: its verify/recovery "
+                     f"pass reached this run's rows and its top-up fed every active campaign in this ledger")}
 
 
 def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location, confirm) -> dict:
@@ -175,8 +193,8 @@ def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location,
     beamfile.validate_label(label)
     beamfile.validate_plane(plane)
     if publish:
-        location = location or ident.default_publish_location
-        publishing.check_ready(location)
+        location = location or ("tape" if ident.production else "scratch")
+        _publish_ready(location)
     # the file is NAMED from the record's identity and PUSHED as run_as; a
     # mismatch publishes one owner's name under the other account
     if publish and ident.run_as != rec.run_as:
@@ -189,7 +207,7 @@ def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location,
     out_json = out_dir / f"{run_id}.{label}.json"
     if out_txt.exists() or out_json.exists():
         raise BeamkitError(f"{out_txt} exists; a beam file is never overwritten (pick another label)")
-    dataset = _dataset(rec)
+    dataset = naming.dataset(rec.owner, rec.tag, rec.dsconf)
     files = bridge.dataset_files(dataset, rec.outloc)
     if not files:
         raise BeamkitError(f"no files in {dataset} at {rec.outloc}: nothing to build a beam file from")
@@ -203,7 +221,7 @@ def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location,
             "created": records.now_utc()}
     if publish:
         sam_name = naming.beamfile_name(rec.owner, rec.tag, label, rec.dsconf)
-        publishing.publish(out_txt, out_dir / sam_name, location, side["source_files"], run_as, confirm)
+        _publish(out_txt, out_dir / sam_name, location, side["source_files"], run_as, confirm)
         side["sam_name"], side["location"] = sam_name, location
     records.atomic_write_text(out_json, json.dumps(side, indent=2) + "\n")
     rec.beamfiles.append(side)
@@ -254,7 +272,8 @@ def enqueue(rec, req, ident, pin, rdir):
     is measured against."""
     entry = compose.entry(tag=rec.tag, dsconf=rec.dsconf, deck_dir=pin.dir, main_input=req.main_input,
                           events_per_job=req.events_per_job, njobs=req.njobs, outloc=req.outloc, params=req.params)
-    entry_path = compose.write_entry_json(entry, rdir / "entry.json")
+    entry_path = rdir / "entry.json"
+    entry_path.write_text(json.dumps([entry], indent=2) + "\n")
     pushed = bridge.push_cnf(entry_path, rec.tag, rec.dsconf, rec.slice_size, req.run_as, req.confirm,
                              prodtools_dir=rec.block.prodtools["dev_dir"])
     rec.block.campaign_id, rec.block.tarball = pushed["campaign_id"], pushed["tarball"]

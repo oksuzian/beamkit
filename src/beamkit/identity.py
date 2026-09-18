@@ -1,11 +1,7 @@
-"""Who a beamkit call acts as.
-
-`run_as` is one concept with several consequences: the SAM owner the
-names carry, which ledger prodtools reads and writes, whether `confirm`
-is required, whether a dev prodtools checkout may ship to the workers,
-where a published file lands by default, and whose campaign_status is
-read. Every one of those rules lives here; the rest of beamkit asks an
-Identity instead of testing `run_as` strings."""
+"""Who a beamkit call acts as. `run_as` decides the SAM owner in the names,
+which ledger prodtools reads, whether `confirm` is required, and whether a
+dev prodtools checkout may ship to the workers; every one of those rules is
+here and the rest of beamkit asks an Identity instead of a run_as string."""
 import getpass
 import os
 from dataclasses import dataclass
@@ -26,10 +22,6 @@ def _username() -> str:
     return getpass.getuser()
 
 
-def dev_dir_from_env() -> Optional[str]:
-    return os.environ.get(DEV_DIR_VAR) or None
-
-
 @dataclass(frozen=True)
 class Identity:
     run_as: str
@@ -45,15 +37,10 @@ class Identity:
         """prodtools' `mine`: read the personal ledger and queue, not production's."""
         return not self.production
 
-    @property
-    def default_publish_location(self) -> str:
-        return "tape" if self.production else "scratch"
-
     def dev_dir_for_shipping(self) -> Optional[str]:
         """The prodtools checkout to ship to the workers, or None for the
-        cvmfs release. A production run uses a published release only;
-        prodtools refuses a dev prodtools_dir for mu2epro outright, so
-        refuse it here before any side effect."""
+        cvmfs release. Refused here, before any side effect, because
+        prodtools refuses a dev prodtools_dir for mu2epro outright."""
         if self.production and self.dev_dir:
             raise IdentityError(f"{DEV_DIR_VAR} is set, which ships that checkout to the workers; a "
                                 f"production run uses a published cvmfs prodtools release only: unset "
@@ -78,14 +65,8 @@ def resolve(run_as, confirm=False, *, writes=True, site="fermilab", owner=None) 
             raise IdentityError("site='nersc' needs the owner from nersc.toml")
         return Identity(run_as="self", owner=owner, dev_dir=None)
     ident = Identity(run_as=run_as, owner="mu2e" if run_as == "mu2epro" else _username(),
-                     dev_dir=dev_dir_from_env())
+                     dev_dir=os.environ.get(DEV_DIR_VAR) or None)
     if writes and ident.production and not confirm:
         raise IdentityError("run_as='mu2epro' registers artifacts in production SAM and submits "
                             "production grid jobs; pass confirm=True")
     return ident
-
-
-def for_record(rec) -> Identity:
-    """The identity a run was created as, from its record. No environment
-    is consulted: the record is the truth about who owns the run."""
-    return Identity(run_as=rec.run_as, owner=rec.owner, dev_dir=None)

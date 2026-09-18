@@ -41,8 +41,7 @@ def test_unknown_resource_name_lists_what_exists(client):
 
 
 def test_mkdir_ls_upload_download_round_trip(client, tmp_path):
-    # The API's mkdir is not -p: build the parents in order first, same as
-    # a real caller (or _remote_layout) must.
+    # the API's mkdir is not -p: build the parents in order first
     client.mkdir("/global/cfs/cdirs/m4599/Users/u/beamkit")
     client.mkdir("/global/cfs/cdirs/m4599/Users/u/beamkit/runs")
     d = "/global/cfs/cdirs/m4599/Users/u/beamkit/runs/T.e470313"
@@ -124,8 +123,8 @@ def test_sfapi_token_refuses_a_public_jwk(cfg, tmp_path):
 
 
 def test_exists_re_raises_anything_that_is_not_no_such_file(client, monkeypatch):
-    """Both transports share exists_via_ls: only the API's own "No such
-    file" is an answer; a 500 or an expired token must not read as False."""
+    """Only the API's own "No such file" is an answer; a 500 or an expired
+    token must not read as False."""
     def boom(path):
         raise iri.IriError("POST /filesystem/ls -> 500: Internal Server Error", status=500, detail="boom")
     monkeypatch.setattr(client, "ls", boom)

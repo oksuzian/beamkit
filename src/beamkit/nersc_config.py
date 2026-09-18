@@ -2,9 +2,13 @@
 about the facility and the caller's client. Loaded per tool call; a
 missing or malformed file is refused with the full key list."""
 import stat
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:                     # tomli is a declared dependency below 3.11
+    import tomli as tomllib
 
 from beamkit import BeamkitError, naming
 
@@ -12,18 +16,15 @@ REQUIRED = ("sfapi_dir", "account", "base_dir", "qos", "owner")
 # the IRI Facility API base; the sfapi transport addresses sfapi_api instead
 # and never reads it, so it is required only for transport = "iri"
 IRI_REQUIRED = ("api",)
-DEFAULTS = {
-    "procs_per_node": 128,
-    "shared_qos": "shared",
-    "shared_max_procs": 64,
-    "transport": "iri",
-    "sfapi_api": "https://api.nersc.gov/api/v1.2",
-    "machine": "perlmutter",
-    "image": "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest",
-    "apptainer": "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer",
-}
+DEFAULTS = {"procs_per_node": 128, "shared_qos": "shared", "shared_max_procs": 64, "transport": "iri",
+            "sfapi_api": "https://api.nersc.gov/api/v1.2", "machine": "perlmutter",
+            "image": "/cvmfs/singularity.opensciencegrid.org/fermilab/fnal-wn-el9:latest",
+            "apptainer": "/cvmfs/oasis.opensciencegrid.org/mis/apptainer/current/bin/apptainer"}
 KEY_NAMES = ("priv_key.pem", "priv_key.jwk")
 TRANSPORTS = ("iri", "sfapi")
+INTS = ("procs_per_node", "shared_max_procs")
+STRINGS = ("api", "sfapi_dir", "account", "base_dir", "qos", "owner", "shared_qos", "transport",
+           "sfapi_api", "machine", "image", "apptainer")
 
 
 class ConfigError(BeamkitError):
@@ -41,20 +42,19 @@ class NerscConfig:
     image: str
     apptainer: str
     api: str = ""               # required for transport = "iri" only
-    # A slice smaller than a node goes to shared_qos, non-exclusive, charged
-    # per core, when it fits the shared queue's cap (half a node on
-    # Perlmutter). Larger partial slices and full slices take a whole node.
+    # a slice smaller than a node goes to shared_qos, non-exclusive and charged
+    # per core, when it fits the cap (half a node on Perlmutter); anything else
+    # takes a whole node
     shared_qos: str = "shared"
     shared_max_procs: int = 64
-    # "iri": api (IRI Facility API v2). "sfapi": the legacy Superfacility
-    # API v1.2 at sfapi_api, machine-addressed, same client credential.
+    # "sfapi" is the legacy Superfacility API v1.2 at sfapi_api,
+    # machine-addressed, same client credential as the IRI v2 api
     transport: str = "iri"
     sfapi_api: str = "https://api.nersc.gov/api/v1.2"
     machine: str = "perlmutter"
 
     def key_file(self) -> Path:
-        """The private key of the sfapi client, refused when readable by
-        anyone else: a red client submits jobs as the user."""
+        """The client's private key, refused when readable by anyone else."""
         for name in KEY_NAMES:
             p = self.sfapi_dir / name
             if p.is_file():
@@ -72,68 +72,11 @@ class NerscConfig:
         return p.read_text().strip()
 
     def as_record(self) -> dict:
-        d = asdict(self)
-        d["sfapi_dir"] = str(self.sfapi_dir)
-        return d
-
-
-def _posint(raw, key, path) -> int:
-    v = raw.get(key, DEFAULTS[key])
-    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
-        raise ConfigError(f"{path}: {key} must be a positive integer, got {v!r}")
-    return v
+        return {**asdict(self), "sfapi_dir": str(self.sfapi_dir)}
 
 
 def config_path(home) -> Path:
     return Path(home) / "nersc.toml"
-
-
-def _toml():
-    """The stdlib tomllib (3.11+) or the tomli backport, imported here
-    rather than at module level: tools.py imports nersc_config unconditionally
-    (get_server_info reports NERSC availability even without a config), and
-    the Fermilab launcher runs under a Python 3.10 venv that has never
-    needed tomli installed."""
-    try:
-        if sys.version_info < (3, 11):
-            import tomli as tomllib
-        else:
-            import tomllib
-    except ImportError as e:
-        raise ConfigError("reading nersc.toml needs tomli on Python < 3.11: "
-                          "pip install beamkit (or pip install tomli)") from e
-    return tomllib
-
-
-def _text(d, key):
-    v = d[key]
-    if not isinstance(v, str) or not v.strip():
-        raise ConfigError(f"nersc.toml: {key} must be a non-empty string, got {v!r}")
-    return v.strip()
-
-
-def _validate_owner(owner, path):
-    """owner names every file the run produces; the Fermilab path's owner is
-    always a login (naming.TAG_RE), and a dotted or otherwise irregular
-    NERSC owner breaks dot-field parsing downstream (the dsconf collision
-    probe, Mu2eName parsing at harvest) silently rather than loudly."""
-    if not naming.TAG_RE.match(owner):
-        raise ConfigError(f"{path}: owner must be a Mu2e name token, your NERSC login (got {owner!r})")
-    return owner
-
-
-def _validate_base_dir(base_dir, path):
-    """job.sh binds only /cvmfs and /global/cfs into the container; any
-    other base_dir passes config, layout and submit and fails only on the
-    node. Quotes/backslashes/whitespace break the double-quoted shell words
-    and the beamfile_job.py Python literal that embed it unescaped."""
-    if not base_dir.startswith("/") or any(c in base_dir for c in (" ", "\t", "\n", '"', "'", "\\")):
-        raise ConfigError(f"{path}: base_dir must be an absolute path with no whitespace, quotes or "
-                          f"backslashes, got {base_dir!r}")
-    if not base_dir.startswith("/global/cfs/"):
-        raise ConfigError(f"{path}: base_dir must start with /global/cfs/ (job.sh binds only /cvmfs and "
-                          f"/global/cfs into the container), got {base_dir!r}")
-    return base_dir
 
 
 def load(home) -> NerscConfig:
@@ -142,7 +85,6 @@ def load(home) -> NerscConfig:
         raise ConfigError(f"no NERSC config at {path}; create it with keys "
                           f"{', '.join(REQUIRED)} (plus {', '.join(IRI_REQUIRED)} on the iri "
                           f"transport; optional: {', '.join(DEFAULTS)})")
-    tomllib = _toml()
     try:
         raw = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:
@@ -151,26 +93,36 @@ def load(home) -> NerscConfig:
     if unknown:
         raise ConfigError(f"{path}: unknown key {sorted(unknown)[0]!r}; allowed: "
                           f"{', '.join((*REQUIRED, *IRI_REQUIRED, *DEFAULTS))}")
-    transport = _text(raw, "transport") if "transport" in raw else DEFAULTS["transport"]
-    if transport not in TRANSPORTS:
-        raise ConfigError(f"{path}: transport must be one of {', '.join(TRANSPORTS)}, got {transport!r}")
-    required = REQUIRED + (IRI_REQUIRED if transport == "iri" else ())
+    d = {"api": "", **DEFAULTS, **raw}
+    if d["transport"] not in TRANSPORTS:
+        raise ConfigError(f"{path}: transport must be one of {', '.join(TRANSPORTS)}, got {d['transport']!r}")
+    required = REQUIRED + (IRI_REQUIRED if d["transport"] == "iri" else ())
     missing = [k for k in required if k not in raw]
     if missing:
-        raise ConfigError(f"{path}: missing {', '.join(missing)}; transport {transport!r} requires "
+        raise ConfigError(f"{path}: missing {', '.join(missing)}; transport {d['transport']!r} requires "
                           f"{', '.join(required)}")
-    ppn = _posint(raw, "procs_per_node", path)
-    smp = _posint(raw, "shared_max_procs", path)
-    return NerscConfig(api=_text(raw, "api").rstrip("/") if "api" in raw else "",
-                       sfapi_dir=Path(_text(raw, "sfapi_dir")).expanduser(),
-                       account=_text(raw, "account"),
-                       base_dir=_validate_base_dir(_text(raw, "base_dir").rstrip("/"), path),
-                       qos=_text(raw, "qos"), owner=_validate_owner(_text(raw, "owner"), path),
-                       procs_per_node=ppn,
-                       shared_qos=_text(raw, "shared_qos") if "shared_qos" in raw else DEFAULTS["shared_qos"],
-                       shared_max_procs=smp,
-                       transport=transport,
-                       sfapi_api=(_text(raw, "sfapi_api") if "sfapi_api" in raw else DEFAULTS["sfapi_api"]).rstrip("/"),
-                       machine=_text(raw, "machine") if "machine" in raw else DEFAULTS["machine"],
-                       image=_text(raw, "image") if "image" in raw else DEFAULTS["image"],
-                       apptainer=_text(raw, "apptainer") if "apptainer" in raw else DEFAULTS["apptainer"])
+    for k in INTS:
+        if isinstance(d[k], bool) or not isinstance(d[k], int) or d[k] < 1:
+            raise ConfigError(f"{path}: {k} must be a positive integer, got {d[k]!r}")
+    for k in (STRINGS if "api" in raw else STRINGS[1:]):        # api: only when given
+        if not isinstance(d[k], str) or not d[k].strip():
+            raise ConfigError(f"{path}: {k} must be a non-empty string, got {d[k]!r}")
+        d[k] = d[k].strip()
+    d["sfapi_dir"] = Path(d["sfapi_dir"]).expanduser()
+    for k in ("api", "sfapi_api", "base_dir"):
+        d[k] = d[k].rstrip("/")
+    # owner names every file the run produces; a dotted or otherwise irregular
+    # one breaks dot-field parsing downstream (the dsconf collision probe,
+    # Mu2eName parsing at harvest) silently rather than loudly
+    if not naming.TAG_RE.match(d["owner"]):
+        raise ConfigError(f"{path}: owner must be a Mu2e name token, your NERSC login (got {d['owner']!r})")
+    # job.sh binds only /cvmfs and /global/cfs into the container; quotes,
+    # backslashes and whitespace break the double-quoted shell words and the
+    # beamfile_job.py Python literal that embed base_dir unescaped
+    if not d["base_dir"].startswith("/") or any(c in d["base_dir"] for c in (" ", "\t", "\n", '"', "'", "\\")):
+        raise ConfigError(f"{path}: base_dir must be an absolute path with no whitespace, quotes or "
+                          f"backslashes, got {d['base_dir']!r}")
+    if not d["base_dir"].startswith("/global/cfs/"):
+        raise ConfigError(f"{path}: base_dir must start with /global/cfs/ (job.sh binds only /cvmfs and "
+                          f"/global/cfs into the container), got {d['base_dir']!r}")
+    return NerscConfig(**d)

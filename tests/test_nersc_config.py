@@ -1,8 +1,3 @@
-import importlib
-import os
-import sys
-from pathlib import Path
-
 import pytest
 
 from beamkit import nersc_config as nc
@@ -108,27 +103,6 @@ def test_no_key_file_is_refused(beamkit_home, sfapi):
         nc.load(beamkit_home).key_file()
 
 
-def test_missing_tomli_still_imports_and_gives_an_actionable_error(beamkit_home, sfapi, monkeypatch):
-    """tools.py imports nersc_config at module level unconditionally (so
-    get_server_info can report NERSC availability even with no config), and
-    the Fermilab launcher runs under a Python 3.10 venv that never needed
-    tomli. Neither import may fail just because tomli is absent; only an
-    actual load() call should need it, and then with a fix-it message."""
-    import beamkit.tools as tools_mod
-
-    monkeypatch.setitem(sys.modules, "tomli", None)
-    monkeypatch.setitem(sys.modules, "tomllib", None)
-    try:
-        importlib.reload(nc)
-        importlib.reload(tools_mod)
-        _write(beamkit_home, GOOD.format(sfapi=sfapi))
-        with pytest.raises(nc.ConfigError, match="tomli"):
-            nc.load(beamkit_home)
-    finally:
-        importlib.reload(nc)
-        importlib.reload(tools_mod)
-
-
 def test_dotted_owner_is_refused(beamkit_home, sfapi):
     _write(beamkit_home, GOOD.format(sfapi=sfapi).replace('owner = "u"', 'owner = "first.last"'))
     with pytest.raises(nc.ConfigError, match="owner") as e:
@@ -150,16 +124,6 @@ def test_base_dir_with_a_quote_is_refused(beamkit_home, sfapi):
         'base_dir = "/global/cfs/cdirs/m4599/Users/u\\"/beamkit"'))
     with pytest.raises(nc.ConfigError, match="base_dir"):
         nc.load(beamkit_home)
-
-
-def test_toml_import_guard_is_symmetric_on_py311(monkeypatch):
-    """The >=3.11 branch imports stdlib tomllib; if that's ever missing
-    (e.g. a stripped-down interpreter) it must convert to ConfigError too,
-    not propagate a bare ImportError out of get_server_info()."""
-    monkeypatch.setattr(sys, "version_info", (3, 11, 0))
-    monkeypatch.setitem(sys.modules, "tomllib", None)
-    with pytest.raises(nc.ConfigError, match="tomli"):
-        nc._toml()
 
 
 def test_transport_keys(beamkit_home, sfapi):

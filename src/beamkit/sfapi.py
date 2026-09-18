@@ -1,22 +1,14 @@
 """Second transport: the legacy NERSC Superfacility API v1.2
-(api.nersc.gov). Same client credential as the IRI v2 transport, same
-seven-method surface the NERSC backend uses (mkdir, ls, exists, upload,
-download, submit, status), same return shapes, so backends/nersc.py
-cannot tell the two apart. Selected by `transport = "sfapi"` in
-nersc.toml. Differences worth knowing: v1.2 reports failures as HTTP 200
-with status "ERROR" and an error string; a job is submitted as an sbatch
-script rendered here from the PSI/J spec; job state comes from sacct
-(`cached=false`, or a job older than today is invisible); mkdir is the
-one shell command run (`utilities/command mkdir -p`), v1.2 having no
-mkdir endpoint."""
+(api.nersc.gov), same client credential and same method surface as the IRI
+v2 client, so backends/nersc.py cannot tell the two apart. Selected by
+`transport = "sfapi"` in nersc.toml."""
 import base64
+import json
 import math
 import shlex
-import time
 from pathlib import Path
 
-from beamkit import iri
-from beamkit.iri import IriError, _detail
+from beamkit.iri import BaseClient, IriError
 
 # Slurm sacct/squeue states -> the IRI vocabulary the backend reads.
 STATE = {
@@ -40,9 +32,8 @@ def map_state(slurm_state) -> str:
 
 
 def render_sbatch(spec) -> str:
-    """The PSI/J JobSpec from backends.nersc.job_spec as an sbatch script.
-    inherit_environment=False becomes --export=NONE; the environment block
-    is exported by the script itself."""
+    """The PSI/J JobSpec from backends.nersc.job_spec as an sbatch script;
+    inherit_environment=False becomes --export=NONE."""
     res, attr = spec["resources"], spec["attributes"]
     custom = attr.get("custom_attributes") or {}
     minutes = max(1, math.ceil(int(attr["duration"]) / 60))
@@ -63,8 +54,7 @@ def render_sbatch(spec) -> str:
         lines.append(f"#SBATCH -C {custom['constraint']}")
     # custom_attributes "licenses"/"module" are IRI-side hints; Perlmutter's
     # sbatch rejects `-L cvmfs` ("Invalid license specification", 2026-09-13)
-    # and cvmfs is mounted on every node without a module, so neither is
-    # rendered.
+    # and cvmfs is mounted on every node without a module, so neither is rendered.
     if not spec.get("inherit_environment", True):
         lines.append("#SBATCH --export=NONE")
     lines.append(f"cd {shlex.quote(spec['directory'])} || exit 2")
@@ -78,93 +68,57 @@ def render_sbatch(spec) -> str:
     return "\n".join(lines) + "\n"
 
 
-class SfapiClient:
-    def __init__(self, cfg, token_provider=None, session=None):
-        self.cfg = cfg
-        self._token_provider = token_provider or (lambda: iri.sfapi_token(cfg))
-        if session is None:
-            import requests
-            session = requests.Session()
-        self._session = session
-        self._token = None
-        self._base = cfg.sfapi_api.rstrip("/")
-        self._machine = cfg.machine
+class SfapiClient(BaseClient):
+    _FAILED = ("failed", "canceled", "cancelled")
 
-    def _headers(self):
-        if self._token is None:
-            self._token = self._token_provider()
-        return {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
+    def _url(self, method, path) -> str:
+        return f"{self.cfg.sfapi_api.rstrip('/')}{path}"
 
-    def _req(self, method, path, **kw):
-        url = f"{self._base}{path}"
-        try:
-            resp = self._session.request(method, url, headers=self._headers(), timeout=120, **kw)
-            if not resp.ok:
-                detail = _detail(resp)
-                hint = f"; {iri._AUTH_HINT}" if resp.status_code in (401, 403) else ""
-                raise IriError(f"{method} {path} -> {resp.status_code}: {detail}{hint}",
-                               status=resp.status_code, detail=detail)
-            body = resp.json() if resp.text else {}
-        except IriError:
-            raise
-        except Exception as e:
-            raise IriError(f"{method} {path}: {type(e).__name__}: {e}") from e
+    def _body(self, method, path, body):
         # v1.2 signals most failures inside a 200
         if isinstance(body, dict) and str(body.get("status", "")).upper() == "ERROR":
             err = str(body.get("error") or body)
             raise IriError(f"{method} {path} -> ERROR: {err[:300]}", detail=err)
         return body
 
+    def _task_ref(self, resp):
+        return resp["task_id"], f"/tasks/{resp['task_id']}"
+
+    def _task_done(self, tid, t) -> dict:
+        # v1.2 answers with the result as a JSON string, and reports a failed
+        # task as a non-ok status inside it
+        res = t.get("result")
+        try:
+            res = json.loads(res) if isinstance(res, str) else (res or {})
+        except ValueError:
+            res = {"output": res}
+        if isinstance(res, dict) and str(res.get("status", "")).lower() not in ("", "ok"):
+            err = res.get("error") or res
+            raise IriError(f"task {tid} failed: {err}", detail=str(err))
+        return res
+
+    def _task_error(self, t) -> str:
+        return str(t.get("result") or "")
+
     def whoami(self) -> dict:
         r = self._req("GET", "/account/")
         return {"username": r.get("name") or r.get("user") or r.get("uid"), **r} if isinstance(r, dict) else {}
 
-    # --- tasks
-    def wait_task(self, resp, timeout_s=600, poll_s=3) -> dict:
-        try:
-            tid = resp["task_id"]
-        except Exception as e:
-            raise IriError(f"wait_task: malformed task response {resp!r}: {type(e).__name__}: {e}") from e
-        deadline = time.monotonic() + timeout_s
-        while True:
-            t = self._req("GET", f"/tasks/{tid}")
-            st = t.get("status")
-            if st == "completed":
-                import json
-                res = t.get("result")
-                try:
-                    res = json.loads(res) if isinstance(res, str) else (res or {})
-                except ValueError:
-                    res = {"output": res}
-                if isinstance(res, dict) and str(res.get("status", "")).lower() not in ("", "ok"):
-                    err = res.get("error") or res
-                    raise IriError(f"task {tid} failed: {err}", detail=str(err))
-                return res
-            if st in ("failed", "canceled", "cancelled"):
-                err = str(t.get("result") or "")
-                raise IriError(f"task {tid} {st}: {err}", detail=err)
-            if time.monotonic() >= deadline:
-                raise IriError(f"task {tid} still {st} after {timeout_s} s")
-            time.sleep(poll_s)
-
     # --- filesystem
-    def _command(self, argv) -> dict:
-        cmd = " ".join(shlex.quote(a) for a in argv)
-        resp = self._req("POST", f"/utilities/command/{self._machine}", data={"executable": cmd})
-        res = self.wait_task(resp)
-        if int(res.get("exit_code", 0) or 0) != 0:
-            raise IriError(f"{cmd!r} exited {res.get('exit_code')}: {res.get('error')}", detail=str(res.get("error")))
-        return res
-
     def mkdir(self, path) -> None:
-        # the only command this transport runs; v1.2 has no mkdir endpoint
-        self._command(["mkdir", "-p", path])
+        # the one shell command this transport runs; v1.2 has no mkdir endpoint
+        cmd = f"mkdir -p {shlex.quote(path)}"
+        res = self.wait_task(self._req("POST", f"/utilities/command/{self.cfg.machine}",
+                                       data={"executable": cmd}))
+        if int(res.get("exit_code", 0) or 0) != 0:
+            raise IriError(f"{cmd!r} exited {res.get('exit_code')}: {res.get('error')}",
+                           detail=str(res.get("error")))
 
     def _upath(self, op, path) -> str:
         # the path keeps its leading slash after the machine segment
         # (".../perlmutter//global/..."); with one slash the API resolves
         # it relative to the service's cwd and answers "No such file"
-        return f"/utilities/{op}/{self._machine}/{path}"
+        return f"/utilities/{op}/{self.cfg.machine}/{path}"
 
     def ls(self, path) -> list[dict]:
         r = self._req("GET", self._upath("ls", path))
@@ -180,57 +134,49 @@ class SfapiClient:
                         "group": e.get("group"), "permissions": perms, "last_modified": e.get("date")})
         return out
 
-    def exists(self, path) -> bool:
-        return iri.exists_via_ls(self.ls, path)
-
     def upload(self, local, remote) -> None:
         local = Path(local)
-        iri.check_upload_size(local)
+        self._check_upload(local)
         with open(local, "rb") as fh:
             self._req("PUT", self._upath("upload", remote), files={"file": (local.name, fh)})
 
-    def download(self, remote) -> str:
-        r = self._req("GET", self._upath("download", remote), params={"binary": "false"})
+    def _download(self, remote, binary):
+        r = self._req("GET", self._upath("download", remote), params={"binary": binary})
         f = r.get("file")
         if f is None:
             raise IriError(f"download {remote}: no file in response {r!r}")
         return f
 
+    def download(self, remote) -> str:
+        return self._download(remote, "false")
+
     def download_bytes(self, remote) -> bytes:
         # binary=true answers the file base64-encoded in "file"
-        r = self._req("GET", self._upath("download", remote), params={"binary": "true"})
-        f = r.get("file")
-        if f is None:
-            raise IriError(f"download {remote}: no file in response {r!r}")
         try:
-            return base64.b64decode(f, validate=True)
+            return base64.b64decode(self._download(remote, "true"), validate=True)
         except (ValueError, TypeError) as e:
             raise IriError(f"download {remote}: response is not base64: {e}") from e
 
     # --- compute
     def submit(self, spec) -> str:
-        script = render_sbatch(spec)
-        resp = self._req("POST", f"/compute/jobs/{self._machine}", data={"job": script, "isPath": "false"})
-        res = self.wait_task(resp)
+        res = self.wait_task(self._req("POST", f"/compute/jobs/{self.cfg.machine}",
+                                       data={"job": render_sbatch(spec), "isPath": "false"}))
         jid = res.get("jobid") if isinstance(res, dict) else None
         if not jid:
             raise IriError(f"submit returned no job id: {res!r}")
         return str(jid)
 
     def status(self, job_id) -> dict:
-        r = self._req("GET", f"/compute/jobs/{self._machine}",
+        r = self._req("GET", f"/compute/jobs/{self.cfg.machine}",
                       params={"index": 0, "sacct": "true", "cached": "false", "kwargs": [f"jobid={job_id}"]})
         rows = r.get("output") or []
         if not rows:
             # sacct has no row until the job is registered: treat as queued
             return {"state": "queued", "exit_code": None, "meta_data": {"state": "PENDING"}}
         row = rows[0]
-        state = map_state(row.get("state"))
         try:
             exit_code = int(str(row.get("exitcode", "0:0")).split(":")[0])
         except ValueError:
             exit_code = None
-        md = dict(row)
-        md.setdefault("nodelist", row.get("nodelist"))
-        md.setdefault("elapsed", row.get("elapsed"))
-        return {"state": state, "exit_code": exit_code, "meta_data": md}
+        return {"state": map_state(row.get("state")), "exit_code": exit_code,
+                "meta_data": {"nodelist": None, "elapsed": None, **row}}

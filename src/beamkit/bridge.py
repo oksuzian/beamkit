@@ -1,10 +1,7 @@
 """The ONLY module that talks to prodtools, as an MCP client of the two
-prodtools servers (prodtools-write, prodtools) spawned from
-$BEAMKIT_PRODTOOLS_ROOT/mcp/scripts/. beamkit's interpreter imports no
-prodtools code and needs none of its environment; the launchers set that
-up inside the children. Children start on the first Fermilab call, live
-until beamkit exits, and are respawned if they die. Every failure is a
-BridgeError. Reads one environment variable, the root."""
+prodtools servers spawned from $BEAMKIT_PRODTOOLS_ROOT/mcp/scripts/.
+Children start on the first Fermilab call, live until beamkit exits, are
+respawned if they die, and every failure is a BridgeError."""
 import os
 import threading
 from pathlib import Path
@@ -29,10 +26,9 @@ CALLS = {
     "locate_file": ("read", frozenset({"name"}), frozenset()),
     "dataset_files": ("read", frozenset({"dataset", "location"}), frozenset()),
 }
-NEEDS = {"locate_file": "the prodtools release that carries locate_file and dataset_files (Mu2e/prodtools PR "
-                        "'mcp: locate_file and dataset_files read-only tools', 2026-09)",
-         "dataset_files": "the prodtools release that carries locate_file and dataset_files (Mu2e/prodtools PR "
-                          "'mcp: locate_file and dataset_files read-only tools', 2026-09)"}
+NEW_TOOLS = ("locate_file", "dataset_files")
+NEEDS = ("the prodtools release that carries locate_file and dataset_files (Mu2e/prodtools PR "
+         "'mcp: locate_file and dataset_files read-only tools', 2026-09)")
 
 _HINT = (f"prodtools is not reachable: set {ROOT_VAR} to a prodtools tree that has "
          f"{LAUNCHERS['write']} and {LAUNCHERS['read']} (the cvmfs release, or a checkout after "
@@ -44,8 +40,7 @@ class BridgeError(BeamkitError):
 
 
 def _need(out, key, tool):
-    """Read `key` out of a tool's result dict, or raise BridgeError: a
-    result-shape drift between beamkit and the far end's prodtools must
+    """Read `key` out of a tool's result, or raise: result-shape drift must
     surface as BridgeError, never a bare KeyError."""
     if not isinstance(out, dict) or key not in out:
         raise BridgeError(f"{tool}: prodtools returned no {key!r} in its result ({str(out)[:200]}); "
@@ -88,17 +83,6 @@ _servers = {}
 _lock = threading.Lock()
 
 
-def _server(kind) -> StdioServer:
-    with _lock:
-        s = _servers.get(kind)
-        if s is None:
-            ok, detail = availability()
-            if not ok:
-                raise BridgeError(detail)
-            s = _servers[kind] = StdioServer(f"prodtools-{kind}", str(launcher(kind)))
-        return s
-
-
 def reset() -> None:
     """Close both children (tests, and a root change)."""
     with _lock:
@@ -108,7 +92,14 @@ def reset() -> None:
 
 
 def _started(kind) -> StdioServer:
-    s = _server(kind)
+    """The child for a kind, spawned on first use and reused afterwards."""
+    with _lock:
+        s = _servers.get(kind)
+        if s is None:
+            ok, detail = availability()
+            if not ok:
+                raise BridgeError(detail)
+            s = _servers[kind] = StdioServer(f"prodtools-{kind}", str(launcher(kind)))
     try:
         s.start()
     except McpClientError as e:
@@ -117,12 +108,10 @@ def _started(kind) -> StdioServer:
 
 
 def _call(tool, **args) -> dict:
-    kind = CALLS[tool][0]
-    s = _started(kind)
+    s = _started(CALLS[tool][0])
     if not s.has_tool(tool):
-        need = NEEDS.get(tool)
         raise BridgeError(f"the prodtools at {prodtools_root()} has no {tool!r} tool"
-                          + (f"; it needs {need}" if need else ""))
+                          + (f"; it needs {NEEDS}" if tool in NEW_TOOLS else ""))
     try:
         out = s.call(tool, **args)
     except McpToolError as e:
@@ -152,9 +141,8 @@ def tick(run_as, campaign_id, confirm) -> dict:
 
 
 def push_file_available() -> bool:
-    """Whether this prodtools exposes a push_file tool. The boundary probe:
-    make_beamfile asks before it reads a dataset or builds anything, so a
-    publish=True that cannot possibly succeed costs a second, not hours."""
+    """The boundary probe: make_beamfile asks before it reads a dataset or
+    builds anything, so a publish=True that cannot succeed costs a second."""
     return _started("write").has_tool("push_file")
 
 
@@ -170,13 +158,11 @@ def campaign_status(campaign_id, mine) -> dict:
 def campaigns(mine) -> list:
     """Every campaign in the caller's ledger (personal for mine=True,
     production otherwise) with its state. Ledger only, no network."""
-    out = _call("list_campaigns", mine=mine)
-    return list(_need(out, "campaigns", "list_campaigns"))
+    return list(_need(_call("list_campaigns", mine=mine), "campaigns", "list_campaigns"))
 
 
 def cnf_exists(cnf_name) -> bool:
-    out = _call("locate_file", name=cnf_name)
-    return bool(_need(out, "exists", "locate_file"))
+    return bool(_need(_call("locate_file", name=cnf_name), "exists", "locate_file"))
 
 
 def dataset_files(dataset, location) -> list:

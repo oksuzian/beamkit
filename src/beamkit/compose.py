@@ -1,7 +1,5 @@
 """The one-entry JSON prodtools' json2jobdef consumes for a g4bl run."""
-import json
 import re
-from pathlib import Path
 
 from beamkit import BeamkitError
 
@@ -37,9 +35,8 @@ def _positive_int(name, v) -> int:
 
 def validate_inputs(*, events_per_job, njobs, outloc, params) -> dict:
     """Every caller-supplied value an entry is built from, checked with no
-    filesystem or network access. tools runs this before the deck fetch and
-    the SAM probe; entry runs it again on its own arguments. One rule, two
-    callers. Returns the params dict."""
+    filesystem or network access. runs.create runs this before the deck
+    fetch and the site probe. Returns the params dict."""
     _positive_int("events_per_job", events_per_job)
     _positive_int("njobs", njobs)
     if outloc not in OUTLOCS:
@@ -48,9 +45,8 @@ def validate_inputs(*, events_per_job, njobs, outloc, params) -> dict:
 
 
 def entry(*, tag, dsconf, deck_dir, main_input, events_per_job, njobs, outloc, params) -> dict:
-    params = validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
-    if not (Path(deck_dir) / main_input).is_file():
-        raise ComposeError(f"main_input {main_input!r} not found in deck dir {deck_dir}")
+    """The entry. Its values were validated by runs.create (validate_inputs,
+    and main_input's presence in the deck) before the run dir existed."""
     e = {
         "runner": "g4bl",
         "desc": tag,
@@ -64,9 +60,3 @@ def entry(*, tag, dsconf, deck_dir, main_input, events_per_job, njobs, outloc, p
     if params:
         e["g4bl_params"] = params
     return e
-
-
-def write_entry_json(entry: dict, path: Path) -> Path:
-    path = Path(path)
-    path.write_text(json.dumps([entry], indent=2) + "\n")
-    return path

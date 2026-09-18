@@ -1,9 +1,8 @@
-"""In-memory stand-in for api.nersc.gov/api/v1.2, shaped by responses
-recorded 2026-09-12/13: failures arrive as HTTP 200 with status "ERROR",
-ls names are absolute, sacct rows carry Slurm vocabulary, command and
-job submission are tasks. Same attribute names as tests/fake_iri.py so
-backend tests can assert on files/dirs/jobs the same way; jobs[jid]["spec"]
-is the PSI/J-shaped dict parsed back out of the sbatch script."""
+"""In-memory stand-in for api.nersc.gov/api/v1.2, shaped by responses recorded
+2026-09-12/13: failures arrive as HTTP 200 with status "ERROR", ls names are
+absolute, sacct rows carry Slurm vocabulary, command and job submission are
+tasks. Attribute names follow tests/fake_iri.py; jobs[jid]["spec"] is the
+PSI/J-shaped dict parsed back out of the sbatch script."""
 import json
 import re
 

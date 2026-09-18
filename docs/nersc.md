@@ -1,8 +1,7 @@
 # NERSC
 
 beamkit runs g4bl on Perlmutter through NERSC's APIs with no Fermilab
-service in the loop. This page is the setup and reference; the design
-is in `specs/2026-09-11-nersc-backend-design.md`.
+service in the loop. This page is the setup and reference.
 
 ## Setup
 

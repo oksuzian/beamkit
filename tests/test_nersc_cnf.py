@@ -37,13 +37,6 @@ def test_build_cnf_layout_and_vcs_exclusion(deck, tmp_path):
         assert json.loads(t.extractfile("jobpars.json").read()) == jp
 
 
-def test_build_cnf_refuses_missing_main_input(deck, tmp_path):
-    jp = nersc_cnf.jobpars(owner="u", tag="T", dsconf="e", main_input="Nope.in",
-                           events_per_job=1, njobs=1, params={})
-    with pytest.raises(nersc_cnf.CnfError, match="Nope.in"):
-        nersc_cnf.build_cnf(deck, jp, tmp_path / "c.tar")
-
-
 def test_build_cnf_refuses_over_the_upload_cap(deck, tmp_path, monkeypatch):
     (deck / "big.bin").write_bytes(b"x" * 100)
     monkeypatch.setattr(iri, "UPLOAD_MAX", 50)

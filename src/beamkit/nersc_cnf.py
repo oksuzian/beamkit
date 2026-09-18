@@ -1,7 +1,6 @@
 """The cnf tarball for a NERSC run, built on the caller's machine: work/
 (the deck without VCS internals) plus jobpars.json in the shape prodtools'
-json2jobdef._build_g4bl_tarball writes, so a later harvest can declare it
-as the parent of every nts file unchanged."""
+json2jobdef._build_g4bl_tarball writes, so harvest can declare it unchanged."""
 import io
 import json
 import os
@@ -32,8 +31,6 @@ def _skip_vcs(ti):
 
 def build_cnf(deck_dir, jobpars: dict, out_path) -> Path:
     deck_dir, out_path = Path(deck_dir), Path(out_path)
-    if not (deck_dir / jobpars["main_input"]).is_file():
-        raise CnfError(f"main_input {jobpars['main_input']!r} not found in deck dir {deck_dir}")
     if out_path.exists():
         raise CnfError(f"{out_path} exists; a cnf is never overwritten")
     part = out_path.with_name(out_path.name + ".part")

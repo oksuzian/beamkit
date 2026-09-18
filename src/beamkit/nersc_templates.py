@@ -1,9 +1,7 @@
 """The files beamkit puts on a Perlmutter node. Placeholders are @@NAME@@
-(bash owns `$` and `{}`); every placeholder must be supplied and every
-supplied key must be used. The g4bl lines are prodtools'
-utils.runmu2e._g4bl_script, reproduced here because the NERSC path runs
-no prodtools on the node; tests/_bridge_contract_probe.py holds the two
-equal."""
+(bash owns `$` and `{}`), all supplied, all used. The g4bl lines copy
+prodtools' utils.runmu2e._g4bl_script (no prodtools runs on the node);
+tests/_bridge_contract_probe.py holds the two equal."""
 import json
 import re
 import shlex
@@ -26,13 +24,10 @@ class TemplateError(BeamkitError):
 
 
 def g4bl_command(main_input, first_event, num_events, histo_arg, params=None) -> str:
-    """prodtools' g4bl line. `main_input` and every `params` value are
-    always shlex.quote'd, matching utils.runmu2e._g4bl_script exactly:
-    those are arbitrary caller strings and must survive whitespace and
-    shell metacharacters unchanged on the node. `first_event` and
-    `histo_arg` arrive pre-rendered by the caller, which is either a
-    literal (quoted by the caller, e.g. g4bl_script) or a bash variable
-    reference that must not be quoted away (render_inner)."""
+    """prodtools' g4bl line. main_input and every params value are shlex.quote'd
+    (arbitrary caller strings, they must survive metacharacters on the node);
+    first_event and histo_arg arrive pre-rendered -- a literal the caller quoted,
+    or a bash variable reference that must not be quoted away."""
     extra = "".join(f" {k}={shlex.quote(str(v))}" for k, v in sorted((params or {}).items()))
     return (f"g4bl {shlex.quote(main_input)} viewer=none First_Event={first_event} Num_Events={num_events} "
             f"histoFile={histo_arg}" + extra)
@@ -80,8 +75,7 @@ _IMPORT_LINE = "from beamkit import BeamkitError\n"
 
 
 def beamfile_module_source() -> str:
-    """beamfile.py as a standalone module: the one beamkit import becomes a
-    local class. Nothing else in that file depends on the package."""
+    """beamfile.py standalone: its one beamkit import becomes a local class."""
     src = Path(_beamfile_module.__file__).read_text()
     if _IMPORT_LINE not in src:
         raise TemplateError("beamfile.py no longer has the expected single beamkit import; update the embedding")
