@@ -49,7 +49,8 @@ def _run(**kw):
     return tools.run_beamline(**base)
 
 
-def test_run_beamline_happy_path(prodtools, beamkit_home):
+def test_run_beamline_happy_path(prodtools, beamkit_home, monkeypatch):
+    knob(monkeypatch, TICK=json.dumps({"output": "a\nb\ntop-up: 1 slice"}))
     out = _run()
     assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["fermilab"]["campaign_id"] == 7
     assert out["dsconf"] == "e470313" and out["owner"] == "u" and out["slice_size"] == 3
@@ -63,7 +64,7 @@ def test_run_beamline_happy_path(prodtools, beamkit_home):
     entry = json.loads(entry_path.read_text())[0]
     assert entry["g4bl_dir"] == out["deck"]["dir"] and entry["njobs"] == 3
     saved = records.load("T.e470313", paths.runs_dir())
-    assert saved.block.ticks[0]["rc"] == 0 and saved.block.ticks[0]["summary"] == "tick ok"
+    assert saved.block.ticks[0]["rc"] == 0 and saved.block.ticks[0]["summary"].endswith("top-up: 1 slice")
     assert saved.block.prodtools == {"root": str(prodtools), "commit": None, "dev_dir": None}
 
 
@@ -135,15 +136,13 @@ def test_push_fails_after_the_campaign_was_created_adopts_it(prodtools, monkeypa
     just created was orphaned with no beamkit run pointing at it.
 
     The dsconf-allocation probe (naming.allocate_dsconf, via
-    fermilab.taken) and the after-failure probe (fermilab.after_failure,
-    via bridge.cnf_exists) ask the SAME question about the SAME cnf name at
-    two different points of one call; a static CNF_EXISTS knob cannot say
-    'free' to the first and 'landed' to the second, so the allocation probe
-    is stubbed for this one test while the after-failure probe (and
-    make_recoveries, and the retry) run against the real fake."""
-    good_taken = fermilab_backend.taken
-    monkeypatch.setattr(fermilab_backend, "taken", lambda ident, tag: (lambda name: False))
-    knob(monkeypatch, FAIL="push_cnf", CNF_EXISTS="cnf.u.T.e470313.0.tar",
+    fermilab.taken) and the after-failure probe (fermilab.after_failure)
+    ask bridge.cnf_exists the SAME question about the SAME cnf name at two
+    different points of one call; CNF_LANDS_ON_FAIL makes the fake's
+    push_cnf mark the tarball as landed right before it raises, so the
+    first probe still sees 'free' (the mark does not exist yet) and the
+    second sees 'landed' -- no client-side probe stub needed."""
+    knob(monkeypatch, FAIL="push_cnf", CNF_LANDS_ON_FAIL="1",
         CAMPAIGNS='[{"id": 7, "state": "active", "tarball": "cnf.u.T.e470313.0.tar"}]')
     with pytest.raises(BeamkitError, match="campaign 7 exists.*make_recoveries"):
         _run()
@@ -152,8 +151,8 @@ def test_push_fails_after_the_campaign_was_created_adopts_it(prodtools, monkeypa
     assert rec.datasets == ["nts.u.T.e470313.root"] and "push_cnf refused by the fake" in rec.error
     out = tools.make_recoveries("T.e470313", "self")
     assert out["campaign_id"] == 7 and records.load("T.e470313", paths.runs_dir()).state == "submitted"
-    # a second run_beamline is a NEW run on the next suffix, not a retry of this one
-    monkeypatch.setattr(fermilab_backend, "taken", good_taken)
+    # a second run_beamline is a NEW run on the next suffix, not a retry of this one: the
+    # landed marker from the first run still makes the base dsconf look taken
     monkeypatch.delenv("FAKE_PRODTOOLS_FAIL", raising=False)
     bridge.reset()
     assert _run()["run_id"] == "T.e470313-001"

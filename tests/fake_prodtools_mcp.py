@@ -4,6 +4,16 @@ and argument names as prodtools; canned answers; failures on demand via
 environment variables (see docs/plans/2026-09-15-prodtools-over-mcp.md,
 Task 2). The read role envelopes failures as {"error": {...}} the way
 prodtools' safe_tool does; the write role raises, as prodtools-write does.
+
+Knobs: FAKE_PRODTOOLS_FAIL (comma-separated tool names to trip),
+FAKE_PRODTOOLS_CNF_EXISTS (comma-separated cnf names locate_file reports as
+existing), FAKE_PRODTOOLS_CAMPAIGNS (a JSON list overriding list_campaigns'
+rows), FAKE_PRODTOOLS_TICK (see run_submissions), and
+FAKE_PRODTOOLS_CNF_LANDS_ON_FAIL (see _land/_landed): prodtools'
+_ENQUEUE_RECOVERY, where a push_cnf that raises may still have landed the
+cnf in SAM before the error, reproduced here with a marker file instead of
+a client-side probe stub, so the two ends (write child, read child) agree
+without either process caching a stale answer.
 """
 import functools
 import json as jsonlib
@@ -22,13 +32,35 @@ def _record(tool, args):
             fh.write(jsonlib.dumps({"tool": tool, "args": args}) + "\n")
 
 
+def _will_trip(tool):
+    return tool in filter(None, os.environ.get("FAKE_PRODTOOLS_FAIL", "").split(","))
+
+
 def _trip(tool):
     if os.environ.get("FAKE_PRODTOOLS_DIE") == tool:
         sys.stderr.write(f"fake prodtools: dying inside {tool}\n")
         sys.stderr.flush()
         os._exit(7)
-    if tool in filter(None, os.environ.get("FAKE_PRODTOOLS_FAIL", "").split(",")):
+    if _will_trip(tool):
         raise RuntimeError(f"{tool} refused by the fake; remedy: try the other thing")
+
+
+def _land(tarball):
+    """FAKE_PRODTOOLS_CNF_LANDS_ON_FAIL=1: push_cnf calls this right before
+    it raises, so a name can be 'in SAM' even though the call that pushed
+    it failed -- prodtools' _ENQUEUE_RECOVERY case. A marker file next to
+    FAKE_PRODTOOLS_CALLS, not an in-process flag: the write child (push_cnf)
+    and the read child (locate_file) are different processes."""
+    calls_path = os.environ.get("FAKE_PRODTOOLS_CALLS")
+    if calls_path:
+        open(os.path.join(os.path.dirname(calls_path), f"landed.{tarball}"), "w").close()
+
+
+def _landed(name):
+    """The other half of _land: locate_file reports `name` as existing when
+    a prior push_cnf call landed it this way, even though it also raised."""
+    calls_path = os.environ.get("FAKE_PRODTOOLS_CALLS")
+    return bool(calls_path) and os.path.exists(os.path.join(os.path.dirname(calls_path), f"landed.{name}"))
 
 
 def _shape(tool):
@@ -51,12 +83,17 @@ def push_cnf(json: str, desc: str, dsconf: str, slice_size: int, run_as: str,
     if prodtools_dir is not None:
         args["prodtools_dir"] = prodtools_dir
     _record("push_cnf", args)
+    tarball = f"cnf.u.{desc}.{dsconf}.0.tar"
+    if os.environ.get("FAKE_PRODTOOLS_CNF_LANDS_ON_FAIL") and _will_trip("push_cnf"):
+        _land(tarball)
     _trip("push_cnf")
     njobs = jsonlib.loads(open(json).read())[0]["njobs"]
-    return {"tarball": f"cnf.u.{desc}.{dsconf}.0.tar", "datasets": ["nts.*.root"],
-            "campaign_id": 7, "njobs": njobs}
+    return {"tarball": tarball, "datasets": ["nts.*.root"], "campaign_id": 7, "njobs": njobs}
 
 
+# FAKE_PRODTOOLS_TICK: a JSON dict merged onto the default return below
+# (rc/needs_attention/output), for tests that need a specific tick outcome
+# (e.g. rc=2, needs_attention=True) that no other knob can express.
 def run_submissions(run_as: str, campaign_id: Optional[int] = None, confirm: bool = False):
     _record("run_submissions", {"run_as": run_as, "campaign_id": campaign_id, "confirm": confirm})
     _trip("run_submissions")
@@ -112,7 +149,8 @@ def locate_file(name: str) -> dict:
     _trip("locate_file")
     if _shape("locate_file"):
         return {"unexpected": 1}
-    exists = name in filter(None, os.environ.get("FAKE_PRODTOOLS_CNF_EXISTS", "").split(","))
+    exists = (name in filter(None, os.environ.get("FAKE_PRODTOOLS_CNF_EXISTS", "").split(","))
+             or _landed(name))
     return {"name": name, "exists": exists, "locations": ["enstore:/x"] if exists else []}
 
 
