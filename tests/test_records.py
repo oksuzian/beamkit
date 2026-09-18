@@ -98,6 +98,22 @@ def test_old_shape_is_refused_naming_the_file(tmp_path, old):
         records.list_runs(tmp_path)
 
 
+def test_malformed_block_is_a_record_error_not_a_bare_typeerror(tmp_path):
+    """A block dict with an unknown key is a Block(**kwargs) TypeError, not
+    a legacy shape; it must still come back as RecordError (so try_load's
+    narrow except catches it) rather than crash the caller outright."""
+    d = tmp_path / "T.e470313"
+    d.mkdir()
+    base = {"run_id": "T.e470313", "tag": "T", "dsconf": "e470313", "owner": "u", "run_as": "self", "deck": {},
+            "params": {}, "events_per_job": 10, "njobs": 3, "outloc": "scratch", "slice_size": 3,
+            "state": "created", "beamkit_version": "0.5.0", "site": "fermilab",
+            "fermilab": {"prodtools": {}, "bogus": 1}}
+    (d / "run.json").write_text(json.dumps(base))
+    with pytest.raises(records.RecordError, match="bogus"):
+        records.load("T.e470313", tmp_path)
+    assert records.try_load("T.e470313", tmp_path) is None
+
+
 def test_importing_records_does_not_import_backends():
     import subprocess, sys
     code = "import sys, beamkit.records; print('beamkit.backends' in sys.modules)"

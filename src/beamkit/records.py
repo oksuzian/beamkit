@@ -65,8 +65,8 @@ class RunRecord:
             raise RecordError(f"{where} was written by beamkit {d.get('beamkit_version') or '<unknown>'} "
                               f"(before 0.5.0) and is not readable by this version; move the run dir aside")
         d = dict(d)
-        block = backends.block_type(site)(**d.pop(site))
         try:
+            block = backends.block_type(site)(**d.pop(site))
             return cls(block=block, **d)
         except TypeError as e:
             raise RecordError(f"{where}: {e}") from e
