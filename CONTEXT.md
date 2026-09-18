@@ -62,12 +62,28 @@ _Avoid_: mode, type
 The name of a beam file's local files and SAM artifact; defaults to the flavor.
 _Avoid_: flavor (a label may name a second file built with the same flavor)
 
+**Site**:
+Where a run's jobs execute: `fermilab` (the grid, through prodtools) or `nersc` (Perlmutter, through the Superfacility API).
+_Avoid_: backend (the backend is the code; the site is the place), facility, cluster
+
+**Backend**:
+The module that carries one site's half of every tool: the name-taken probe, the retry predicate, enqueue, status, outputs, beam-file build. Two backends, one interface; `tools.py` never knows which.
+_Avoid_: driver, plugin, adapter (an adapter is the architecture word; in beamkit's language it is a backend)
+
+**Run request**:
+Every caller value of `run_beamline`, validated once, site-neutral fields plus the two site-specific ones. The backend refuses the other site's argument.
+_Avoid_: args, kwargs, options
+
+**Site block**:
+The part of a run record only its site's backend reads and writes: `fermilab` (campaign, tarball, ticks, prodtools) or `nersc` (run dir on CFS, cnf, walltime, Slurm jobs, config). Declared by the backend, stored by records.py without knowing the keys.
+_Avoid_: extra, meta, dict
+
 **Sidecar**:
 The `.json` beside a beam file: cuts, counts, pot, missing indices, source files.
 
 ## Relationships
 
-- A **Run** has exactly one **Deck pin**, one **Dsconf**, one **Identity** and one **Campaign**.
+- A **Run** has exactly one **Deck pin**, one **Dsconf**, one **Identity**, one **Site** and one **Site block**; a Fermilab **Run** also has one **Campaign**.
 - A **Tag** at two **Deck pins** is two **Runs**; the same **Tag** and pin twice is a `-NNN` **Dsconf**.
 - A **Run** produces one nts dataset and any number of **Beam files**.
 - A **Beam file** has one **Flavor** and one **Label**; several **Beam files** may share a **Flavor**.
@@ -85,3 +101,6 @@ The `.json` beside a beam file: cuts, counts, pot, missing indices, source files
 - "location" meant both the read side (`outloc`, where the run's ntuples live) and the write side (where a published beam file lands). Resolved: `outloc` is the run's; `location` is the beam file's.
 - "flavor" meant both the cut table and the file label. Resolved: **Flavor** is cuts, **Label** is names.
 - "campaign" was used for the whole run. Resolved: a **Campaign** is prodtools' half; a **Run** is the whole.
+- "backend" and "site" were used for each other. Resolved: a **Site** is the place; a **Backend** is the module for it.
+- "retry" meant both a recovery tick and calling `run_beamline` again after an `enqueue_failed`. Resolved: a **Tick** recovers; a retryable run dir is one a new `run_beamline` may overwrite because the previous attempt created nothing at the site.
+
