@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from beamkit import BeamkitError, beamfile, paths, records, tools
+from beamkit.backends import fermilab
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -12,7 +13,10 @@ FIX = Path(__file__).parent / "fixtures"
 def _record(njobs=5, run_as="self", owner="u"):
     rec = records.RunRecord(run_id="T.e470313", tag="T", dsconf="e470313", owner=owner, run_as=run_as,
                             deck={}, params={}, events_per_job=10, njobs=njobs, outloc="scratch",
-                            slice_size=5, state="submitted", campaign_id=7, created=records.now_utc())
+                            slice_size=5, state="submitted", created=records.now_utc(),
+                            site="fermilab",
+                            block=fermilab.Block(prodtools={"root": "/pt", "commit": "c" * 40, "dev_dir": None},
+                                                 campaign_id=7))
     records.save(rec, paths.runs_dir())
     return rec
 

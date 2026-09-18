@@ -79,7 +79,11 @@ def test_job_spec_honours_shared_config(cfg):
     assert nersc.job_spec(c, run_id="T.e470313", run_dir=RUN_DIR, offset=0, count=9, duration=1)["resources"]["exclusive_node_use"] is True
 
 
-def test_validate_site():
-    assert backends.validate_site("nersc") == "nersc"
+def test_get_returns_the_backend_module():
+    assert backends.get("nersc") is nersc
     with pytest.raises(BeamkitError, match="site must be one of"):
-        backends.validate_site("ornl")
+        backends.get("ornl")
+
+
+def test_block_type_is_the_backend_s_block_class():
+    assert backends.block_type("nersc") is nersc.Block

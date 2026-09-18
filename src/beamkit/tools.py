@@ -8,6 +8,7 @@ from typing import Optional
 
 from beamkit import (BeamkitError, __version__, backends, beamfile, bridge, compose, decks, identity, naming,
                      nersc_config, paths, publishing, records)
+from beamkit.backends import fermilab as fermilab_backend
 from beamkit.backends import nersc as nersc_backend
 from beamkit.decks import DEFAULT_DECK_URL
 
@@ -43,7 +44,7 @@ def _is_retryable_run_dir(run_id, runs_dir) -> bool:
     'enqueue_failed' with no campaign. Nothing was created anywhere else, so
     the retry overwrites it in place. Any other run dir stays refused."""
     rec = records.try_load(run_id, runs_dir)
-    return bool(rec and rec.state == "enqueue_failed" and rec.campaign_id is None)
+    return bool(rec and rec.state == "enqueue_failed" and rec.block.campaign_id is None)
 
 
 def _dataset(rec):
@@ -79,7 +80,7 @@ def _after_failed_push(rec, ident) -> str:
     if camp is None:
         return (f"; {name} is in SAM with no campaign, so the dsconf {rec.dsconf!r} is burned and the "
                 f"next call allocates the next suffix")
-    rec.campaign_id, rec.tarball, rec.state = camp["id"], name, "created"
+    rec.block.campaign_id, rec.block.tarball, rec.state = camp["id"], name, "created"
     rec.datasets = [_dataset(rec)]
     return (f"; {name} is in SAM and campaign {camp['id']} exists for it, so the record now carries "
             f"that campaign in state 'created' and nothing was submitted: "
@@ -99,7 +100,7 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
     the IRI API (site='nersc'). Every caller value is refused before the
     deck fetch and the remote probe, so a refused call burns no dsconf and
     writes no record."""
-    backends.validate_site(site)
+    backends.get(site)
     if site == "nersc":
         if slice_size is not None:
             raise BeamkitError("slice_size applies to site='fermilab' only; a NERSC run is sliced by "
@@ -128,9 +129,9 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
     rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=ident.owner, run_as=run_as,
                             deck=pin.as_record(), params=params, events_per_job=events_per_job,
                             njobs=njobs, outloc=outloc, slice_size=slice_size, state="created",
-                            created=records.now_utc(),
-                            prodtools=dict(bridge.prodtools_info(), dev_dir=dev_dir),
-                            beamkit_version=__version__)
+                            site="fermilab",
+                            block=fermilab_backend.Block(prodtools=dict(bridge.prodtools_info(), dev_dir=dev_dir)),
+                            created=records.now_utc(), beamkit_version=__version__)
     records.save(rec, runs_dir)
     try:
         pushed = bridge.push_cnf(entry_path, tag, dsconf, slice_size, run_as, confirm, prodtools_dir=dev_dir)
@@ -139,21 +140,21 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
         outcome = _after_failed_push(rec, ident)
         records.save(rec, runs_dir)
         raise BeamkitError(f"run {run_id}: push_cnf failed ({e}){outcome}") from e
-    rec.campaign_id, rec.tarball, rec.datasets = pushed["campaign_id"], pushed["tarball"], [_dataset(rec)]
+    rec.block.campaign_id, rec.block.tarball, rec.datasets = pushed["campaign_id"], pushed["tarball"], [_dataset(rec)]
     # the campaign's njobs is what missing_indices is measured against; the
     # requested count is only what we asked for
     rec.njobs = pushed["njobs"]
     records.save(rec, runs_dir)
     if rec.njobs != njobs:
-        raise BeamkitError(f"run {run_id}: prodtools reports campaign {rec.campaign_id} holds {rec.njobs} jobs "
+        raise BeamkitError(f"run {run_id}: prodtools reports campaign {rec.block.campaign_id} holds {rec.njobs} jobs "
                            f"but this call asked for {njobs}; the record now carries {rec.njobs} and nothing "
                            f"was submitted. Understand the difference, then make_recoveries({run_id!r}, "
                            f"{run_as!r}) submits it")
     if submit:
         _tick_into(rec, run_as, confirm, runs_dir,
-                   failure=f"run {run_id}: campaign {rec.campaign_id} was created but the first tick failed; "
+                   failure=f"run {run_id}: campaign {rec.block.campaign_id} was created but the first tick failed; "
                            f"call make_recoveries({run_id!r}, {run_as!r}) to submit it",
-                   campaign_id=rec.campaign_id)
+                   campaign_id=rec.block.campaign_id)
     return rec.to_dict()
 
 
@@ -167,7 +168,7 @@ def _tick_into(rec, run_as, confirm, runs_dir, failure, campaign_id):
         rec.error = f"{type(e).__name__}: {e}"
         records.save(rec, runs_dir)
         raise BeamkitError(f"{failure}: {e}") from e
-    rec.ticks.append({"when": records.now_utc(), "rc": t["rc"], "needs_attention": t["needs_attention"],
+    rec.block.ticks.append({"when": records.now_utc(), "rc": t["rc"], "needs_attention": t["needs_attention"],
                       "summary": _summary(t["output"])})
     rec.error = None
     rec.state = "needs_attention" if t["needs_attention"] else "submitted"
@@ -197,21 +198,21 @@ def make_recoveries(run_id: str, run_as: str, confirm: bool = False) -> dict:
     if rec.site == "nersc":
         raise BeamkitError(f"run {run_id}: no recovery on nersc; submit a new run (beamline_status reports "
                            f"the missing indices)")
-    if rec.campaign_id is None:
+    if rec.block.campaign_id is None:
         raise BeamkitError(f"run {run_id} has no campaign (state {rec.state!r}); nothing to recover")
     if ident.run_as != rec.run_as:
         raise BeamkitError(f"run {run_id} lives in the run_as={rec.run_as!r} ledger; tick it as that identity")
-    camp = _campaign(rec.campaign_id, mine=ident.mine)
+    camp = _campaign(rec.block.campaign_id, mine=ident.mine)
     scoped = camp["state"] == "active"
     t = _tick_into(rec, run_as, confirm, paths.runs_dir(),
-                   failure=f"run {run_id}: tick of campaign {rec.campaign_id} failed",
-                   campaign_id=rec.campaign_id if scoped else None)
-    return {"run_id": run_id, "campaign_id": rec.campaign_id, "campaign_state": camp["state"],
+                   failure=f"run {run_id}: tick of campaign {rec.block.campaign_id} failed",
+                   campaign_id=rec.block.campaign_id if scoped else None)
+    return {"run_id": run_id, "campaign_id": rec.block.campaign_id, "campaign_state": camp["state"],
             "rc": t["rc"], "needs_attention": t["needs_attention"], "output": t["output"],
             "tick_scope": "campaign" if scoped else "ledger",
             "note": ("the verify/recovery pass covered every active campaign in this ledger, not only this run"
                      if scoped else
-                     f"campaign {rec.campaign_id} is {camp['state']!r}, so this was the bare tick: the "
+                     f"campaign {rec.block.campaign_id} is {camp['state']!r}, so this was the bare tick: the "
                      f"verify/recovery pass reached its rows and the top-up fed every active campaign in "
                      f"this ledger")}
 
@@ -231,8 +232,8 @@ def beamline_status(run_id: str) -> dict:
         n = nersc_backend.status(rec)
         return {"record": rec.to_dict(), "campaign": None, "nersc": n}
     campaign = None
-    if rec.campaign_id is not None:
-        campaign = bridge.campaign_status(rec.campaign_id, mine=identity.for_record(rec).mine)
+    if rec.block.campaign_id is not None:
+        campaign = bridge.campaign_status(rec.block.campaign_id, mine=identity.for_record(rec).mine)
     return {"record": rec.to_dict(), "campaign": campaign, "nersc": None}
 
 
@@ -273,7 +274,7 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
     from the files on CFS (site='nersc', never downloads). No completeness
     check: pot counts the files that exist. flavor selects the cut table;
     label names the files and defaults to the flavor."""
-    backends.validate_site(site)
+    backends.get(site)
     rec = records.load(run_id, paths.runs_dir())
     if rec.site != site:
         raise BeamkitError(f"run {run_id} is a {rec.site!r} run; pass site={rec.site!r}")

@@ -88,8 +88,10 @@ def test_fetch_kind_validated(sfapi_fake, tmp_path):
 
 def test_fetch_on_a_fermilab_run_is_refused(beamkit_home, tmp_path, monkeypatch):
     from beamkit import paths, records
+    from beamkit.backends import fermilab
     rec = records.RunRecord(run_id="F.abc1234", tag="F", dsconf="abc1234", owner="u", run_as="self", deck={},
-                            params={}, events_per_job=1, njobs=1, outloc="scratch", slice_size=1, state="created")
+                            params={}, events_per_job=1, njobs=1, outloc="scratch", slice_size=1, state="created",
+                            site="fermilab", block=fermilab.Block(prodtools={"root": "/pt", "commit": "c" * 40, "dev_dir": None}))
     records.save(rec, paths.runs_dir())
     with pytest.raises(BeamkitError, match="fermilab.*dCache"):
         tools.fetch_outputs("F.abc1234", str(tmp_path))

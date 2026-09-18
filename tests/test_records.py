@@ -3,22 +3,27 @@ import json
 import pytest
 
 from beamkit import BeamkitError, records
+from beamkit.backends import fermilab, nersc
 
 
-def _rec(run_id="T.e470313", created="2026-09-03T10:00:00+00:00", state="created"):
+def _rec(run_id="T.e470313", created="2026-09-03T10:00:00+00:00", state="created", site="fermilab", block=None):
+    if block is None:
+        block = (fermilab.Block(prodtools={"root": "/pt", "commit": "c" * 40, "dev_dir": None}) if site == "fermilab"
+                 else nersc.Block(run_dir="/global/cfs/x/runs/" + run_id, cnf="cnf.u.T.e470313.0.tar",
+                                  walltime_s=100, config={}))
     return records.RunRecord(run_id=run_id, tag="T", dsconf="e470313", owner="u", run_as="self",
-                             deck={"sha": "e" * 40}, params={}, events_per_job=10, njobs=3,
-                             outloc="scratch", slice_size=3, state=state, created=created)
+                             deck={}, params={}, events_per_job=10, njobs=3, outloc="scratch", slice_size=3,
+                             state=state, site=site, block=block, created=created)
 
 
 def test_round_trip(tmp_path):
     rec = _rec()
-    rec.campaign_id = 5
-    rec.ticks.append({"when": "t", "rc": 0, "needs_attention": False, "summary": "ok"})
+    rec.block.campaign_id = 5
+    rec.block.ticks.append({"when": "t", "rc": 0, "needs_attention": False, "summary": "ok"})
     p = records.save(rec, tmp_path)
     assert p == tmp_path / "T.e470313" / "run.json"
     assert records.load("T.e470313", tmp_path) == rec
-    assert json.loads(p.read_text())["campaign_id"] == 5
+    assert json.loads(p.read_text())["fermilab"]["campaign_id"] == 5
 
 
 def test_save_is_atomic_no_part_left(tmp_path):
@@ -53,23 +58,51 @@ def test_now_utc_shape():
     assert s.endswith("+00:00") and len(s) == len("2026-09-03T10:00:00+00:00")
 
 
-def test_record_without_site_reads_as_fermilab(tmp_path):
+def test_fermilab_block_round_trips_under_its_site_key(tmp_path):
     rec = _rec()
-    d = rec.to_dict()
-    del d["site"]
-    del d["nersc"]
-    (tmp_path / "T.e470313").mkdir()
-    (tmp_path / "T.e470313" / "run.json").write_text(json.dumps(d))
-    loaded = records.load("T.e470313", tmp_path)
-    assert loaded.site == "fermilab" and loaded.nersc == {}
-
-
-def test_nersc_block_round_trips(tmp_path):
-    rec = _rec(state="partially_submitted")
-    rec.site = "nersc"
-    rec.nersc = {"run_dir": "/global/cfs/x", "jobs": [{"slurm_id": "1", "offset": 0, "count": 3}]}
+    rec.block.campaign_id, rec.block.tarball = 7, "cnf.u.T.e470313.0.tar"
+    rec.block.ticks.append({"when": "t", "rc": 0, "needs_attention": False, "summary": ""})
     records.save(rec, tmp_path)
-    assert records.load("T.e470313", tmp_path) == rec
+    d = json.loads((tmp_path / "T.e470313" / "run.json").read_text())
+    assert d["site"] == "fermilab" and d["fermilab"]["campaign_id"] == 7 and "nersc" not in d
+    assert "campaign_id" not in d and "block" not in d
+    back = records.load("T.e470313", tmp_path)
+    assert isinstance(back.block, fermilab.Block) and back.block.ticks[0]["rc"] == 0
+
+
+def test_nersc_block_round_trips_under_its_site_key(tmp_path):
+    rec = _rec(site="nersc")
+    rec.block.jobs.append({"slurm_id": "1", "offset": 0, "count": 3, "submitted": "t"})
+    records.save(rec, tmp_path)
+    d = json.loads((tmp_path / "T.e470313" / "run.json").read_text())
+    assert d["site"] == "nersc" and d["nersc"]["jobs"][0]["slurm_id"] == "1" and "fermilab" not in d
+    back = records.load("T.e470313", tmp_path)
+    assert isinstance(back.block, nersc.Block) and back.block.walltime_s == 100
+
+
+@pytest.mark.parametrize("old", [
+    {"campaign_id": 7},                       # pre-0.5.0 fermilab record
+    {"site": "nersc", "nersc": {"jobs": []}, "campaign_id": None},   # pre-0.5.0 nersc record
+    {"site": "fermilab"},                     # no block at all
+])
+def test_old_shape_is_refused_naming_the_file(tmp_path, old):
+    d = tmp_path / "T.e470313"
+    d.mkdir()
+    base = {"run_id": "T.e470313", "tag": "T", "dsconf": "e470313", "owner": "u", "run_as": "self", "deck": {},
+            "params": {}, "events_per_job": 10, "njobs": 3, "outloc": "scratch", "slice_size": 3,
+            "state": "created", "beamkit_version": "0.4.0"}
+    (d / "run.json").write_text(json.dumps({**base, **old}))
+    with pytest.raises(records.RecordError, match=r"run\.json was written by beamkit 0\.4\.0 \(before 0\.5\.0\)"):
+        records.load("T.e470313", tmp_path)
+    with pytest.raises(records.RecordError, match="before 0.5.0"):
+        records.list_runs(tmp_path)
+
+
+def test_importing_records_does_not_import_backends():
+    import subprocess, sys
+    code = "import sys, beamkit.records; print('beamkit.backends' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    assert out.strip() == "False"
 
 
 def test_new_states_are_listable(tmp_path):

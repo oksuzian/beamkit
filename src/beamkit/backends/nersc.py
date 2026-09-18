@@ -4,6 +4,7 @@ Nothing here touches SAM, dCache, prodtools or a ledger."""
 import json
 import math
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from beamkit import (BeamkitError, __version__, beamfile, compose, decks, identity, iri, naming,
@@ -11,6 +12,16 @@ from beamkit import (BeamkitError, __version__, beamfile, compose, decks, identi
 
 WALLTIME_DEFAULT = 172800
 CUSTOM_ATTRIBUTES = {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}
+
+
+@dataclass
+class Block:
+    """What only the NERSC backend reads and writes on a run record."""
+    run_dir: str
+    cnf: str
+    walltime_s: int
+    config: dict
+    jobs: list = field(default_factory=list)
 
 
 def slices(njobs, procs_per_node) -> list[tuple[int, int]]:
@@ -112,7 +123,7 @@ def _taken(cfg, client, tag):
 def _retryable(run_id, runs_dir) -> bool:
     rec = records.try_load(run_id, runs_dir)
     return bool(rec and rec.site == "nersc" and rec.state == "enqueue_failed"
-                and not rec.nersc.get("jobs"))
+                and not rec.block.jobs)
 
 
 def _remote_layout(cfg, client, rd, uploads):
@@ -134,12 +145,12 @@ def _submit_missing(rec, cfg, client, runs_dir):
     jobs already on Slurm, which would submit some indices twice. A failure
     part way is saved as partially_submitted and raised; the next
     submit_run continues from there."""
-    have = {j["offset"] for j in rec.nersc["jobs"]}
+    have = {j["offset"] for j in rec.block.jobs}
     all_slices = slices(rec.njobs, rec.slice_size)
     todo = [(o, c) for o, c in all_slices if o not in have]
     total = len(all_slices)
-    rd = rec.nersc["run_dir"]
-    dur = duration_s(rec.events_per_job, rec.nersc["walltime_s"])
+    rd = rec.block.run_dir
+    dur = duration_s(rec.events_per_job, rec.block.walltime_s)
     for k, (offset, count) in enumerate(todo, start=len(have)):
         spec = job_spec(cfg, run_id=rec.run_id, run_dir=rd, offset=offset, count=count, duration=dur)
         try:
@@ -151,9 +162,9 @@ def _submit_missing(rec, cfg, client, runs_dir):
             records.save(rec, runs_dir)
             raise BeamkitError(f"run {rec.run_id}: job {k} of {total} (offset {offset}) failed to submit: {e}; "
                                f"check squeue for beamkit.{rec.run_id}.{offset} before submit_run; "
-                               f"{len(rec.nersc['jobs'])} job(s) are running; submit_run({rec.run_id!r}, "
+                               f"{len(rec.block.jobs)} job(s) are running; submit_run({rec.run_id!r}, "
                                f"'self') submits the rest") from e
-        rec.nersc["jobs"].append({"slurm_id": jid, "offset": offset, "count": count,
+        rec.block.jobs.append({"slurm_id": jid, "offset": offset, "count": count,
                                   "submitted": records.now_utc()})
         records.save(rec, runs_dir)
     rec.state, rec.error = "submitted", None
@@ -192,9 +203,8 @@ def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_i
                             deck=pin.as_record(), params=params, events_per_job=events_per_job, njobs=njobs,
                             outloc="scratch", slice_size=cfg.procs_per_node, state="created",
                             created=records.now_utc(), beamkit_version=__version__, site="nersc",
-                            datasets=[naming.dataset(ident.owner, tag, dsconf)],
-                            nersc={"run_dir": rd, "cnf": cnf_name, "walltime_s": walltime_s, "jobs": [],
-                                   "config": cfg.as_record()})
+                            block=Block(run_dir=rd, cnf=cnf_name, walltime_s=walltime_s, config=cfg.as_record()),
+                            datasets=[naming.dataset(ident.owner, tag, dsconf)])
     records.save(rec, runs_dir)
     try:
         local_cnf = rdir / cnf_name
@@ -228,7 +238,7 @@ def submit_run(run_id, run_as) -> dict:
                            f"(the Fermilab path submits through make_recoveries)")
     if rec.state not in SUBMITTABLE:
         raise BeamkitError(f"run {run_id} is in state {rec.state!r}; submit_run applies to {SUBMITTABLE}")
-    rd = rec.nersc["run_dir"]
+    rd = rec.block.run_dir
     if not client.exists(f"{rd}/inner.sh"):
         raise BeamkitError(f"run {run_id}: remote layout at {rd} is missing inner.sh (job.sh cannot run); "
                            f"run run_beamline again")
@@ -241,7 +251,7 @@ def _nts_entries(client, rec) -> tuple:
     sit beside them. A run that failed before its remote layout was ever
     created (e.g. the cnf itself exceeded the upload cap) has no out/ dir
     yet -- that is zero files, not an error, same as client.exists()."""
-    rd = rec.nersc["run_dir"]
+    rd = rec.block.run_dir
     try:
         entries = client.ls(f"{rd}/out")
     except iri.IriError as e:
@@ -281,7 +291,7 @@ def status(rec) -> dict:
     complete / short once every job is terminal, submitted otherwise.
     created and partially_submitted are left as they are."""
     cfg, client = _cfg_client()
-    jobs = [_job_status(client, j) for j in rec.nersc.get("jobs", [])]
+    jobs = [_job_status(client, j) for j in rec.block.jobs]
     outs = out_counts(client, rec)
     if rec.state in ("submitted", "short", "complete") and jobs:
         if all(j["state"] in TERMINAL for j in jobs):
@@ -296,7 +306,7 @@ def status(rec) -> dict:
 def outputs(rec) -> dict:
     """A run with no out/ dir on CFS yet has no outputs, not an error."""
     cfg, client = _cfg_client()
-    rd = rec.nersc["run_dir"]
+    rd = rec.block.run_dir
     files, _ = _nts_entries(client, rec)
     return {"run_id": rec.run_id, "run_dir": rd, "n_files": len(files),
             "total_size": sum(f["size"] for f in files), "files": files, "beamfiles": list(rec.beamfiles)}
@@ -337,7 +347,7 @@ def fetch_outputs(rec, dest, kind) -> dict:
         names = ", ".join(f"{f['name']} ({f['size']} bytes)" for f in big[:5])
         raise BeamkitError(f"run {rec.run_id}: {len(big)} of {len(files)} {kind} files exceed the API's "
                            f"{iri.DOWNLOAD_MAX}-byte download cap ({names}{', ...' if len(big) > 5 else ''}); "
-                           f"nothing fetched: move them with Globus or scp from {rec.nersc['run_dir']}")
+                           f"nothing fetched: move them with Globus or scp from {rec.block.run_dir}")
     dest = Path(dest).expanduser().resolve()
     dest.mkdir(parents=True, exist_ok=True)
     fetched = skipped = 0
@@ -386,7 +396,7 @@ def make_beamfile(*, rec, flavor, run_as, plane, cuts, label, publish) -> dict:
     if counts["nts"] == 0:
         raise BeamkitError(f"run {run_id}: 0 of {counts['expected']} nts files on CFS "
                            f"({counts['logs']} logs); nothing to build a beam file from")
-    rd = rec.nersc["run_dir"]
+    rd = rec.block.run_dir
     name = naming.beamfile_name(rec.owner, rec.tag, label, rec.dsconf)
     stem = f"{rd}/beamfiles/{name[:-len('.txt')]}"
     local = records.run_dir(runs_dir, run_id) / "beamfiles"

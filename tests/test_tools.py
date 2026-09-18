@@ -62,7 +62,7 @@ def _run(**kw):
 
 def test_run_beamline_happy_path(fake_bridge, beamkit_home):
     out = _run()
-    assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["campaign_id"] == 7
+    assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["fermilab"]["campaign_id"] == 7
     assert out["dsconf"] == "e470313" and out["owner"] == "u" and out["slice_size"] == 3
     assert out["deck"]["sha"] == SHA and out["deck"]["pinned"] is True
     assert out["datasets"] == ["nts.u.T.e470313.root"]
@@ -74,8 +74,8 @@ def test_run_beamline_happy_path(fake_bridge, beamkit_home):
     entry = json.loads(entry_path.read_text())[0]
     assert entry["g4bl_dir"] == out["deck"]["dir"] and entry["njobs"] == 3
     saved = records.load("T.e470313", paths.runs_dir())
-    assert saved.ticks[0]["rc"] == 0 and saved.ticks[0]["summary"].endswith("top-up: 1 slice")
-    assert saved.prodtools == {"root": "/pt", "commit": "c" * 40, "dev_dir": None}
+    assert saved.block.ticks[0]["rc"] == 0 and saved.block.ticks[0]["summary"].endswith("top-up: 1 slice")
+    assert saved.block.prodtools == {"root": "/pt", "commit": "c" * 40, "dev_dir": None}
 
 
 def test_datasets_is_the_resolved_name_not_the_glob(fake_bridge):
@@ -125,7 +125,7 @@ def test_outloc_unknown_refused(fake_bridge):
 
 def test_submit_false_creates_only(fake_bridge):
     out = _run(submit=False)
-    assert out["state"] == "created" and out["campaign_id"] == 7 and fake_bridge["tick"] == []
+    assert out["state"] == "created" and out["fermilab"]["campaign_id"] == 7 and fake_bridge["tick"] == []
 
 
 def test_push_fails_before_sam_reports_the_dsconf_free(fake_bridge, monkeypatch):
@@ -135,7 +135,7 @@ def test_push_fails_before_sam_reports_the_dsconf_free(fake_bridge, monkeypatch)
     with pytest.raises(BeamkitError, match="is not in SAM.*is free"):
         _run()
     rec = records.load("T.e470313", paths.runs_dir())
-    assert rec.state == "enqueue_failed" and rec.campaign_id is None and "rc=1" in rec.error
+    assert rec.state == "enqueue_failed" and rec.block.campaign_id is None and "rc=1" in rec.error
     assert fake_bridge["tick"] == []
 
 
@@ -170,14 +170,14 @@ def test_push_fails_after_the_campaign_was_created_adopts_it(fake_bridge, monkey
     with pytest.raises(BeamkitError, match="campaign 7 exists.*make_recoveries"):
         _run()
     rec = records.load("T.e470313", paths.runs_dir())
-    assert rec.state == "created" and rec.campaign_id == 7 and rec.tarball == "cnf.u.T.e470313.0.tar"
+    assert rec.state == "created" and rec.block.campaign_id == 7 and rec.block.tarball == "cnf.u.T.e470313.0.tar"
     assert rec.datasets == ["nts.u.T.e470313.root"] and "ksu ate" in rec.error
     out = tools.make_recoveries("T.e470313", "self")
     assert out["campaign_id"] == 7 and records.load("T.e470313", paths.runs_dir()).state == "submitted"
     # a second run_beamline is a NEW run on the next suffix, not a retry of this one
     monkeypatch.setattr(tools.bridge, "push_cnf", good)
     assert _run()["run_id"] == "T.e470313-001"
-    assert records.load("T.e470313", paths.runs_dir()).campaign_id == 7
+    assert records.load("T.e470313", paths.runs_dir()).block.campaign_id == 7
 
 
 def test_push_fails_in_sam_and_the_ledger_is_unreadable_says_so(fake_bridge, monkeypatch):
@@ -188,7 +188,7 @@ def test_push_fails_in_sam_and_the_ledger_is_unreadable_says_so(fake_bridge, mon
     monkeypatch.setattr(tools.bridge, "campaigns", lambda mine: (_ for _ in ()).throw(_bridge.BridgeError("ledger locked")))
     with pytest.raises(BeamkitError, match="is in SAM.*ledger could not be read.*ledger locked"):
         _run()
-    assert records.load("T.e470313", paths.runs_dir()).campaign_id is None
+    assert records.load("T.e470313", paths.runs_dir()).block.campaign_id is None
 
 
 def test_push_fails_and_sam_probe_fails_says_so(fake_bridge, monkeypatch):
@@ -221,7 +221,7 @@ def test_retry_after_failed_push_reuses_the_run_dir(fake_bridge, monkeypatch):
     assert records.load("T.e470313", paths.runs_dir()).state == "enqueue_failed"
     state["fail"] = False
     out = _run()
-    assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["campaign_id"] == 7
+    assert out["run_id"] == "T.e470313" and out["state"] == "submitted" and out["fermilab"]["campaign_id"] == 7
 
 
 def test_retry_refused_once_a_campaign_exists(fake_bridge):
@@ -242,12 +242,12 @@ def test_self_run_ships_the_dev_prodtools_dir_and_records_it(fake_bridge, monkey
     out = _run()
     assert out["state"] == "submitted"
     assert fake_bridge["push_cnf"][0]["prodtools_dir"] == "/exp/mu2e/app/users/u/prodtools"
-    assert out["prodtools"]["dev_dir"] == "/exp/mu2e/app/users/u/prodtools"
+    assert out["fermilab"]["prodtools"]["dev_dir"] == "/exp/mu2e/app/users/u/prodtools"
 
 
 def test_release_run_sends_no_prodtools_dir(fake_bridge):
     out = _run()
-    assert "prodtools_dir" not in fake_bridge["push_cnf"][0] and out["prodtools"]["dev_dir"] is None
+    assert "prodtools_dir" not in fake_bridge["push_cnf"][0] and out["fermilab"]["prodtools"]["dev_dir"] is None
 
 
 def test_tick_fails_leaves_recoverable_record(fake_bridge, monkeypatch):
@@ -257,7 +257,7 @@ def test_tick_fails_leaves_recoverable_record(fake_bridge, monkeypatch):
     with pytest.raises(BeamkitError, match="make_recoveries"):
         _run()
     rec = records.load("T.e470313", paths.runs_dir())
-    assert rec.state == "created" and rec.campaign_id == 7 and "rc=1" in rec.error
+    assert rec.state == "created" and rec.block.campaign_id == 7 and "rc=1" in rec.error
 
 
 def test_mu2epro_without_confirm_refused_before_any_side_effect(fake_bridge, beamkit_home):
@@ -315,7 +315,7 @@ def test_make_recoveries_appends_tick(fake_bridge):
     _run()
     out = tools.make_recoveries("T.e470313", "self")
     assert out["rc"] == 0 and out["campaign_id"] == 7
-    assert len(records.load("T.e470313", paths.runs_dir()).ticks) == 2
+    assert len(records.load("T.e470313", paths.runs_dir()).block.ticks) == 2
     assert fake_bridge["tick"][-1] == dict(run_as="self", campaign_id=7, confirm=False)
 
 
@@ -422,7 +422,7 @@ def test_campaign_njobs_disagreeing_with_the_request_is_refused_before_the_tick(
     with pytest.raises(BeamkitError, match="holds 4 jobs.*asked for 3.*make_recoveries"):
         _run()
     rec = records.load("T.e470313", paths.runs_dir())
-    assert rec.campaign_id == 7 and rec.njobs == 4 and rec.state == "created"
+    assert rec.block.campaign_id == 7 and rec.njobs == 4 and rec.state == "created"
     assert fake_bridge["tick"] == []
 
 

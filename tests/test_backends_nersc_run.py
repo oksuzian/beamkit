@@ -56,7 +56,7 @@ def _run(**kw):
 def test_happy_path_layout_record_and_jobs(fake, nersc_home):
     rec = _run()
     rd = f"{BASE}/runs/T.e470313"
-    assert rec["site"] == "nersc" and rec["state"] == "submitted" and rec["campaign_id"] is None
+    assert rec["site"] == "nersc" and rec["state"] == "submitted" and "fermilab" not in rec
     assert rec["owner"] == "u" and rec["datasets"] == ["nts.u.T.e470313.root"]
     assert rec["nersc"]["run_dir"] == rd and rec["nersc"]["cnf"] == "cnf.u.T.e470313.0.tar"
     assert {rd, rd + "/out", rd + "/slurm", rd + "/beamfiles"} <= fake.dirs

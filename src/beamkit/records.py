@@ -25,6 +25,9 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+LEGACY_KEYS = frozenset({"campaign_id", "tarball", "ticks", "prodtools"})
+
+
 @dataclass
 class RunRecord:
     run_id: str
@@ -39,24 +42,34 @@ class RunRecord:
     outloc: str
     slice_size: int
     state: str
-    campaign_id: int | None = None
-    tarball: str | None = None
+    site: str
+    block: object                        # backends.<site>.Block
     datasets: list = field(default_factory=list)   # nts.<owner>.<desc>.<dsconf>.root
     created: str = ""
-    ticks: list = field(default_factory=list)
-    prodtools: dict = field(default_factory=dict)
     beamkit_version: str = ""
     beamfiles: list = field(default_factory=list)
     error: str | None = None
-    site: str = "fermilab"
-    nersc: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        """The block travels under its site's name, so run.json says
+        "fermilab": {...} or "nersc": {...}, never "block"."""
+        d = asdict(self)
+        d[self.site] = d.pop("block")
+        return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "RunRecord":
-        return cls(**d)
+    def from_dict(cls, d: dict, where="run.json") -> "RunRecord":
+        from beamkit import backends    # late: every backend imports records
+        site = d.get("site")
+        if LEGACY_KEYS & set(d) or site not in backends.SITES or site not in d:
+            raise RecordError(f"{where} was written by beamkit {d.get('beamkit_version') or '<unknown>'} "
+                              f"(before 0.5.0) and is not readable by this version; move the run dir aside")
+        d = dict(d)
+        block = backends.block_type(site)(**d.pop(site))
+        try:
+            return cls(block=block, **d)
+        except TypeError as e:
+            raise RecordError(f"{where}: {e}") from e
 
 
 def run_dir(runs_dir, run_id) -> Path:
@@ -83,7 +96,7 @@ def load(run_id, runs_dir) -> RunRecord:
     p = run_dir(runs_dir, run_id) / "run.json"
     if not p.is_file():
         raise RecordError(f"no run record for {run_id!r} at {p}")
-    return RunRecord.from_dict(json.loads(p.read_text()))
+    return RunRecord.from_dict(json.loads(p.read_text()), where=str(p))
 
 
 def try_load(run_id, runs_dir) -> RunRecord | None:
@@ -113,8 +126,7 @@ def list_runs(runs_dir, state=None) -> list[RunRecord]:
     root = Path(runs_dir)
     if not root.is_dir():
         return []
-    recs = [RunRecord.from_dict(json.loads(p.read_text()))
-            for p in sorted(root.glob("*/run.json"))]
+    recs = [load(p.parent.name, runs_dir) for p in sorted(root.glob("*/run.json"))]
     if state is not None:
         recs = [r for r in recs if r.state == state]
     return sorted(recs, key=lambda r: r.created, reverse=True)
