@@ -96,12 +96,12 @@ def make_beamfile(run_id: str, flavor: str, run_as: str, plane: str = "Z3712", c
     from the files on CFS (site='nersc', never downloads). No completeness
     check: pot counts the files that exist. flavor selects the cut table;
     label names the files and defaults to the flavor."""
-    backends.get(site)
+    backend = backends.get(site)
     rec = _load(run_id)
     if rec.site != site:
         raise BeamkitError(f"run {run_id} is a {rec.site!r} run; pass site={rec.site!r}")
-    return backends.get(site).make_beamfile(rec, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
-                                            label=label, publish=publish, location=location, confirm=confirm)
+    return backend.make_beamfile(rec, flavor=flavor, run_as=run_as, plane=plane, cuts=cuts,
+                                 label=label, publish=publish, location=location, confirm=confirm)
 
 
 def get_server_info() -> dict:

@@ -237,8 +237,11 @@ def taken(ident, tag):
 def retryable(rec) -> bool:
     """A run dir left by a push that never reached prodtools: state
     'enqueue_failed' with no campaign. Nothing was created anywhere else, so
-    the retry overwrites it in place."""
-    return rec.state == "enqueue_failed" and rec.block.campaign_id is None
+    the retry overwrites it in place. The site check comes first: a run id
+    can be claimed by a different site's backend, whose Block has a
+    different shape, so rec.block.campaign_id must not be read before rec
+    is confirmed to be a Fermilab record."""
+    return rec.site == "fermilab" and rec.state == "enqueue_failed" and rec.block.campaign_id is None
 
 
 def new_block(req, ident, pin, run_id, dsconf):

@@ -3,7 +3,7 @@ with no facility in the loop."""
 import pytest
 
 from beamkit import BeamkitError, backends, decks, identity, paths, records, runs
-from beamkit.backends import fermilab
+from beamkit.backends import fermilab, nersc
 
 SHA = "e470313" + "0" * 33
 
@@ -124,6 +124,23 @@ def test_retryable_prior_attempt_is_overwritten_and_other_dirs_refused(stub):
     stub._fail = None
     out = runs.create(_req())
     assert out["state"] == "submitted"
+    with pytest.raises(BeamkitError, match="already exists; a run id is never reused"):
+        runs.create(_req())
+
+
+def test_retryable_checks_the_records_site_before_its_block_shape(stub):
+    """A run id can be saved by a different site's backend (its Block has a
+    different shape). fermilab.retryable(rec) must refuse that record as
+    not-fermilab before touching rec.block.campaign_id, which a nersc.Block
+    does not have -- an AttributeError there is a bug, not a legitimate
+    "run id already exists" refusal."""
+    rec = records.RunRecord(run_id="T.e470313", tag="T", dsconf="e470313", owner="u", run_as="self",
+                            deck={}, params={}, events_per_job=10, njobs=3, outloc="scratch", slice_size=3,
+                            state="enqueue_failed", site="nersc",
+                            block=nersc.Block(run_dir="/x", cnf="c", walltime_s=1, config={}),
+                            created=records.now_utc())
+    records.save(rec, paths.runs_dir())
+    stub.retryable = fermilab.retryable
     with pytest.raises(BeamkitError, match="already exists; a run id is never reused"):
         runs.create(_req())
 

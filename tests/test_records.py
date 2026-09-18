@@ -134,11 +134,25 @@ def test_try_load_is_none_when_there_is_no_record(tmp_path):
     assert records.try_load("T.e470313", tmp_path).run_id == "T.e470313"
 
 
-def test_claim_run_dir_refuses_a_used_id_unless_the_caller_says_retryable(tmp_path):
-    records.claim_run_dir(tmp_path, "T.e470313", lambda *a: False)
+def test_claim_run_dir_refuses_a_used_id_with_a_record_unless_the_caller_says_retryable(tmp_path):
+    d = records.claim_run_dir(tmp_path, "T.e470313", lambda *a: False)
+    (d / "run.json").write_text("{}")
     with pytest.raises(BeamkitError, match="already exists; a run id is never reused"):
         records.claim_run_dir(tmp_path, "T.e470313", lambda *a: False)
     assert records.claim_run_dir(tmp_path, "T.e470313", lambda *a: True).is_dir()
+
+
+def test_claim_run_dir_claims_an_empty_dir_without_consulting_the_predicate(tmp_path):
+    """A run dir with no run.json corresponds to nothing anywhere else (the
+    record is written before any remote effect), so it is claimable
+    outright -- the retryable predicate is never even called."""
+    d = tmp_path / "T.e470313"
+    d.mkdir()
+
+    def boom(*a):
+        raise AssertionError("the predicate must not be consulted for a dir with no run.json")
+
+    assert records.claim_run_dir(tmp_path, "T.e470313", boom) == d
 
 
 def test_atomic_write_text_leaves_no_part_file(tmp_path):

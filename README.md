@@ -1,7 +1,7 @@
 # beamkit
 
 G4beamline production for Mu2e, driven from Claude (or any MCP client).
-One server, eight tools: pin a deck, run it as N jobs on the Fermilab grid
+One server, nine tools: pin a deck, run it as N jobs on the Fermilab grid
 or on NERSC Perlmutter, watch it, collect the outputs, build a beam file.
 On Fermilab every write goes through prodtools with its gates intact; on
 NERSC nothing but your own NERSC account is involved.

@@ -253,9 +253,20 @@ def test_dsconf_collision_suffix(prodtools, monkeypatch):
 
 
 def test_run_dir_already_present_is_error(prodtools, beamkit_home):
-    (beamkit_home / "runs" / "T.e470313").mkdir(parents=True)
+    d = beamkit_home / "runs" / "T.e470313"
+    d.mkdir(parents=True)
+    (d / "run.json").write_text("{}")
     with pytest.raises(BeamkitError, match="exists"):
         _run()
+
+
+def test_run_dir_present_without_a_record_is_claimable(prodtools, beamkit_home):
+    """A run dir with no run.json corresponds to nothing anywhere else (the
+    record is written before any remote effect, see records.claim_run_dir),
+    so it is not a collision -- unlike a dir that already carries one."""
+    (beamkit_home / "runs" / "T.e470313").mkdir(parents=True)
+    out = _run()
+    assert out["run_id"] == "T.e470313" and out["state"] == "submitted"
 
 
 def test_make_recoveries_appends_tick(prodtools, monkeypatch):

@@ -110,11 +110,14 @@ def try_load(run_id, runs_dir) -> RunRecord | None:
 
 def claim_run_dir(runs_dir, run_id, retryable) -> Path:
     """The local run dir of a new run, created. A run id is never reused, so
-    an existing dir is refused unless `retryable(run_id, runs_dir)` says the
-    previous attempt created nothing anywhere else and may be overwritten
-    in place."""
+    an existing dir with a record is refused unless `retryable(run_id,
+    runs_dir)` says the previous attempt created nothing anywhere else and
+    may be overwritten in place. A dir with no run.json is claimable
+    outright, the predicate is never consulted: the record is written
+    before any remote effect, so a dir with no record corresponds to
+    nothing anywhere else."""
     d = run_dir(runs_dir, run_id)
-    if d.exists() and not retryable(run_id, runs_dir):
+    if d.exists() and (d / "run.json").is_file() and not retryable(run_id, runs_dir):
         raise BeamkitError(f"run dir {d} already exists; a run id is never reused")
     d.mkdir(parents=True, exist_ok=True)
     return d

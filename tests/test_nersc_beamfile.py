@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from beamkit import BeamkitError, beamfile, nersc_templates as nt, tools
+from beamkit.backends import nersc
 from tests.test_backends_nersc_run import BASE, SHA, deck, fake, nersc_home, _run   # noqa: F401
 from tests.test_backends_nersc_status import _land, RD
 
@@ -134,14 +135,22 @@ def test_location_refused_on_nersc(fake):
     """location selects a Fermilab publish target (tape/scratch); a NERSC
     beam file always lands in beamfiles/ on CFS."""
     _run(njobs=1)
+    # _run already built and cached a client; clear both so this call's own
+    # effect is visible rather than masked by the cache from setup.
+    nersc._CACHE.clear()
+    fake.made.clear()
     with pytest.raises(BeamkitError, match="location applies to site='fermilab' publishing only"):
         tools.make_beamfile("T.e470313", "bm", "self", site="nersc", location="scratch")
+    assert fake.made == []
 
 
 def test_publish_refused_on_nersc(fake):
     _run(njobs=1)
+    nersc._CACHE.clear()
+    fake.made.clear()
     with pytest.raises(BeamkitError, match="publishing is part of harvest"):
         tools.make_beamfile("T.e470313", "bm", "self", site="nersc", publish=True)
+    assert fake.made == []
 
 
 def test_site_must_match_the_record(fake):

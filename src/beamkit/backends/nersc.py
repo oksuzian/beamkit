@@ -392,13 +392,13 @@ def beamfile_duration(n_nts) -> int:
 
 
 def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location, confirm) -> dict:
-    cfg, client = _cfg_client()
-    identity.resolve(run_as, site="nersc", owner=cfg.owner)
     if location is not None:
         raise BeamkitError("location applies to site='fermilab' publishing only")
     if publish:
         raise BeamkitError("publish=True on a NERSC run: publishing is part of harvest, which runs at Fermilab; "
                            "build with publish=False")
+    cfg, client = _cfg_client()
+    identity.resolve(run_as, site="nersc", owner=cfg.owner)
     label = flavor if label is None else label
     resolved = beamfile.resolve_cuts(flavor, cuts)
     beamfile.validate_label(label)

@@ -28,7 +28,7 @@ graph TB
 
     subgraph beamkit["beamkit"]
         SRV["<b>server.py</b><br/>FastMCP wiring — registers tools.py's<br/>functions as they are. Imports mcp only<br/>inside create_mcp_server()."]
-        TOOLS["<b>tools.py</b><br/>The eight tools. Orchestration only:<br/>validate the site, build a RunRequest or<br/>load the record, delegate to backends.get(site)."]
+        TOOLS["<b>tools.py</b><br/>The nine tools. Orchestration only:<br/>validate the site, build a RunRequest or<br/>load the record, delegate to backends.get(site)."]
         RUNS["<b>runs.py</b><br/>Run creation, once (§5.2): validate, allocate<br/>the dsconf, save the record, enqueue, submit.<br/>The backend supplies eight hooks."]
 
         subgraph rules["Rules — pure, no I/O"]
@@ -131,7 +131,7 @@ prodtools servers that needs only `mcp`.
 | `nersc_templates.py` | Fills in the `@@NAME@@` placeholders of the files beamkit puts on a Perlmutter node; the g4bl lines are prodtools' `utils.runmu2e._g4bl_script` reproduced here because the NERSC path runs no prodtools on the node. |
 | `templates/` | The four rendered files: `job.sh` (enter the Mu2e EL9 image via apptainer), `inner.sh` (per-index g4bl run, log opened first so 128 tasks on one node never interleave), `beamfile.sh` (enter the image to build a beam file), `beamfile_job.py` (self-contained BLTrackFile writer, using uproot from the cvmfs ana environment). |
 | `backends/__init__.py` | `SITES` (`"fermilab"`, `"nersc"`); `get(site)`, which imports the named backend module on first use and refuses an unknown site; `block_type(site)` (`get(site).Block`), the late import `records.from_dict` uses so `records.py` names a block type without an import cycle. |
-| `backends/fermilab.py` | The Fermilab backend: `runs.create`'s eight hooks (`resolve_identity`, `validate`, `taken`, `retryable`, `new_block`, `enqueue`, `after_failure`, `submit`) plus the Fermilab body of every other tool (`submit_run`, `make_recoveries`, `status`, `outputs`, `make_beamfile`) and `available()`. `bridge.py` is reached from here, from `publishing.py`, and from `tools.py`'s own `get_server_info` probe — nowhere else imports it. |
+| `backends/fermilab.py` | The Fermilab backend: `runs.create`'s eight hooks (`resolve_identity`, `validate`, `taken`, `retryable`, `new_block`, `enqueue`, `after_failure`, `submit`) plus the Fermilab body of every other tool (`submit_run`, `make_recoveries`, `status`, `outputs`, `fetch_outputs`, `make_beamfile`) and `available()`. `bridge.py` is reached from here, from `publishing.py`, and from `tools.py`'s own `get_server_info` probe — nowhere else imports it. |
 | `backends/nersc.py` | The NERSC backend: a run is a directory on CFS plus one Slurm job per slice of `procs_per_node` indices, driven through the IRI Facility API. Supplies the same eight hooks as `backends/fermilab.py` plus the NERSC body of every other tool. Touches no SAM, dCache, prodtools or ledger. |
 | `__init__.py` | Version and `BeamkitError`, the base of every error beamkit raises. |
 
@@ -207,7 +207,7 @@ sequenceDiagram
     participant I as api.iri.nersc.gov
     participant P as Perlmutter node
     C->>B: run_beamline(tag, deck_ref, run_as="self", site="nersc", njobs)
-    B->>N: run_beamline(...)
+    B->>N: runs.create → validate / taken / new_block / enqueue / submit
     N->>N: load nersc.toml, resolve identity, validate, pin deck
     N->>I: ls runs/<tag>.<sha7>  (dsconf collision probe)
     N->>N: build cnf tarball, render job.sh + inner.sh, save record (created)
