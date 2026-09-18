@@ -23,8 +23,10 @@ and `{"mcpServers": {"beamkit": {"command": "beamkit-mcp"}}}`.
 **On a Mu2e gpvm**, once: put uv's cache off nashome,
 `export UV_CACHE_DIR=/exp/mu2e/app/users/$USER/.uv-cache` in your shell
 profile. The Fermilab grid path spawns the prodtools MCP servers from
-`/cvmfs/mu2e.opensciencegrid.org/bin/prodtools/current`; set
-`BEAMKIT_PRODTOOLS_ROOT` in the server's `env` to use a checkout instead.
+`/cvmfs/mu2e.opensciencegrid.org/bin/prodtools/current`, which needs
+prodtools v3.3.3 or later (v3.3.2 fails every job under the current `muse
+setup ops`); set `BEAMKIT_PRODTOOLS_ROOT` in the server's `env` to use a
+checkout instead.
 
 **For NERSC jobs:** a Superfacility API client in `~/.sfapi/` and a
 `nersc.toml`; five minutes, see [docs/nersc.md](docs/nersc.md).
