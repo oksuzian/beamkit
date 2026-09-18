@@ -2,9 +2,10 @@
 bridge.py. This module carries the Fermilab half of every tool (the
 interface in docs/specs/2026-09-17-backend-seam-design.md §6)."""
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from beamkit import BeamkitError, beamfile, bridge, identity, naming, paths, publishing, records
+from beamkit import (BeamkitError, beamfile, bridge, compose, identity, naming, paths, publishing,
+                     records)
 
 SLICE_MAX = 10000
 
@@ -46,14 +47,6 @@ def _dataset(rec):
     return naming.dataset(rec.owner, rec.tag, rec.dsconf)
 
 
-def _is_retryable_run_dir(run_id, runs_dir) -> bool:
-    """A run dir left by a push that never reached prodtools: state
-    'enqueue_failed' with no campaign. Nothing was created anywhere else, so
-    the retry overwrites it in place. Any other run dir stays refused."""
-    rec = records.try_load(run_id, runs_dir)
-    return bool(rec and rec.state == "enqueue_failed" and rec.block.campaign_id is None)
-
-
 def _after_failed_push(rec, ident) -> str:
     """What a failed push_cnf left behind, and what the record should say.
 
@@ -84,7 +77,6 @@ def _after_failed_push(rec, ident) -> str:
         return (f"; {name} is in SAM with no campaign, so the dsconf {rec.dsconf!r} is burned and the "
                 f"next call allocates the next suffix")
     rec.block.campaign_id, rec.block.tarball, rec.state = camp["id"], name, "created"
-    rec.datasets = [_dataset(rec)]
     return (f"; {name} is in SAM and campaign {camp['id']} exists for it, so the record now carries "
             f"that campaign in state 'created' and nothing was submitted: "
             f"make_recoveries({rec.run_id!r}, {ident.run_as!r}) submits it")
@@ -217,3 +209,61 @@ def make_beamfile(rec, *, flavor, run_as, plane, cuts, label, publish, location,
     rec.beamfiles.append(side)
     records.save(rec, paths.runs_dir())
     return side
+
+
+# --- creation hooks (runs.create)
+
+def resolve_identity(req):
+    return identity.resolve(req.run_as, req.confirm)
+
+
+def validate(req, ident):
+    """Fermilab's own arguments: no walltime (prodtools sizes the jobs), the
+    slice size in range, and the outloc/identity pair. dev_dir_for_shipping
+    is called here so a production call with a dev checkout is refused
+    before the deck fetch."""
+    if req.walltime_s is not None:
+        raise BeamkitError("walltime_s applies to site='nersc' only; the Fermilab path takes its resources "
+                           "from prodtools")
+    ident.dev_dir_for_shipping()
+    _outloc(req.outloc, ident)
+    return replace(req, slice_size=_slice_size(req.slice_size, req.njobs))
+
+
+def taken(ident, tag):
+    return bridge.cnf_exists
+
+
+def retryable(rec) -> bool:
+    """A run dir left by a push that never reached prodtools: state
+    'enqueue_failed' with no campaign. Nothing was created anywhere else, so
+    the retry overwrites it in place."""
+    return rec.state == "enqueue_failed" and rec.block.campaign_id is None
+
+
+def new_block(req, ident, pin, run_id, dsconf):
+    return Block(prodtools=dict(bridge.prodtools_info(), dev_dir=ident.dev_dir_for_shipping()))
+
+
+def enqueue(rec, req, ident, pin, rdir):
+    """entry.json, then push_cnf: the cnf into SAM and its campaign into the
+    ledger. rec.njobs becomes the campaign's count, which missing_indices
+    is measured against."""
+    entry = compose.entry(tag=rec.tag, dsconf=rec.dsconf, deck_dir=pin.dir, main_input=req.main_input,
+                          events_per_job=req.events_per_job, njobs=req.njobs, outloc=req.outloc, params=req.params)
+    entry_path = compose.write_entry_json(entry, rdir / "entry.json")
+    pushed = bridge.push_cnf(entry_path, rec.tag, rec.dsconf, rec.slice_size, req.run_as, req.confirm,
+                             prodtools_dir=rec.block.prodtools["dev_dir"])
+    rec.block.campaign_id, rec.block.tarball = pushed["campaign_id"], pushed["tarball"]
+    rec.njobs = pushed["njobs"]
+
+
+def after_failure(rec, ident) -> str:
+    return _after_failed_push(rec, ident)
+
+
+def submit(rec, ident, confirm):
+    _tick_into(rec, ident.run_as, confirm, paths.runs_dir(),
+               failure=f"run {rec.run_id}: campaign {rec.block.campaign_id} was created but the first tick "
+                       f"failed; call make_recoveries({rec.run_id!r}, {ident.run_as!r}) to submit it",
+               campaign_id=rec.block.campaign_id)

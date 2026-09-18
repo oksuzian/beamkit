@@ -28,6 +28,10 @@ def test_cnf_name():
     assert naming.cnf_name("oksuzian", "MuBeam", "e470313") == "cnf.oksuzian.MuBeam.e470313.0.tar"
 
 
+def test_dsconf_of_reads_the_fourth_field():
+    assert naming.dsconf_of("cnf.u.T.e470313-002.0.tar") == "e470313-002"
+
+
 def test_allocate_free_base_unsuffixed():
     probed = []
     def taken(name):

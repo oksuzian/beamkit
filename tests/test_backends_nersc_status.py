@@ -80,7 +80,8 @@ def test_beamline_outputs_on_an_enqueue_failed_run_is_empty_not_an_error(fake, m
     def boom(*a, **kw):
         raise OSError("disk full")
     monkeypatch.setattr(nersc.nersc_cnf, "build_cnf", boom)
-    with pytest.raises(BeamkitError, match="nothing was submitted"):
+    with pytest.raises(BeamkitError,
+                       match=r"enqueue failed \(.*\); fix the cause and call again, the run dir is reused"):
         _run(njobs=1)
     rec = tools.beamline_status("T.e470313")["record"]
     assert rec["state"] == "enqueue_failed"

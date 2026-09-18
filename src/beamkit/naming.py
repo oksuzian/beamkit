@@ -36,6 +36,11 @@ def cnf_name(owner, desc, dsconf) -> str:
     return f"cnf.{owner}.{desc}.{dsconf}.0.tar"
 
 
+def dsconf_of(cnf_name) -> str:
+    """The dsconf a cnf name carries: its fourth dot-field."""
+    return cnf_name.split(".")[3]
+
+
 def dataset(owner, desc, dsconf) -> str:
     """The nts dataset a run writes. prodtools' push_cnf reports the entry's
     outloc key ("nts.*.root"), a glob, so the real name is composed here."""

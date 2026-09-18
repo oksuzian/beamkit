@@ -5,8 +5,8 @@ bridge talks to prodtools. Every refusal is a BeamkitError."""
 import sys
 from typing import Optional
 
-from beamkit import (BeamkitError, __version__, backends, bridge, compose, decks, identity, naming,
-                     nersc_config, paths, records)
+from beamkit import (BeamkitError, __version__, backends, bridge, identity, nersc_config, paths,
+                     records, runs)
 from beamkit.backends import fermilab as fermilab_backend
 from beamkit.backends import nersc as nersc_backend
 from beamkit.decks import DEFAULT_DECK_URL
@@ -21,7 +21,7 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
                  outloc: str = "scratch", dsconf: Optional[str] = None, slice_size: Optional[int] = None,
                  submit: bool = True, confirm: bool = False, deck_dir: Optional[str] = None,
                  deck_url: str = DEFAULT_DECK_URL, site: str = "fermilab",
-                 walltime_s: int = nersc_backend.WALLTIME_DEFAULT) -> dict:
+                 walltime_s: Optional[int] = None) -> dict:
     """Pin the deck, allocate desc=tag and dsconf=<sha7>, then either
     register the cnf and create its campaign through prodtools and submit
     it in one tick (site='fermilab'), or build the cnf locally, lay the run
@@ -29,64 +29,11 @@ def run_beamline(tag: str, run_as: str, deck_ref: Optional[str] = None, params: 
     the IRI API (site='nersc'). Every caller value is refused before the
     deck fetch and the remote probe, so a refused call burns no dsconf and
     writes no record."""
-    backends.get(site)
-    if site == "nersc":
-        if slice_size is not None:
-            raise BeamkitError("slice_size applies to site='fermilab' only; a NERSC run is sliced by "
-                               "procs_per_node from nersc.toml")
-        return nersc_backend.run_beamline(tag=tag, run_as=run_as, deck_ref=deck_ref, params=params,
-                                          events_per_job=events_per_job, njobs=njobs, main_input=main_input,
-                                          outloc=outloc, dsconf=dsconf, submit=submit, deck_dir=deck_dir,
-                                          deck_url=deck_url, walltime_s=walltime_s)
-    if walltime_s != nersc_backend.WALLTIME_DEFAULT:
-        raise BeamkitError("walltime_s applies to site='nersc' only; the Fermilab path takes its resources "
-                           "from prodtools")
-    ident = identity.resolve(run_as, confirm)
-    dev_dir = ident.dev_dir_for_shipping()
-    naming.validate_tag(tag)
-    params = compose.validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
-    fermilab_backend._outloc(outloc, ident)
-    slice_size = fermilab_backend._slice_size(slice_size, njobs)
-    pin = decks.pin(deck_ref, deck_dir, deck_url, paths.decks_dir(), ident.production)
-    dsconf = naming.allocate_dsconf(ident.owner, tag, naming.dsconf_base(pin.sha), bridge.cnf_exists, explicit=dsconf)
-    entry = compose.entry(tag=tag, dsconf=dsconf, deck_dir=pin.dir, main_input=main_input,
-                          events_per_job=events_per_job, njobs=njobs, outloc=outloc, params=params)
-    run_id = naming.run_id(tag, dsconf)
-    runs_dir = paths.runs_dir()
-    rdir = records.claim_run_dir(runs_dir, run_id, fermilab_backend._is_retryable_run_dir)
-    entry_path = compose.write_entry_json(entry, rdir / "entry.json")
-    rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=ident.owner, run_as=run_as,
-                            deck=pin.as_record(), params=params, events_per_job=events_per_job,
-                            njobs=njobs, outloc=outloc, slice_size=slice_size, state="created",
-                            site="fermilab",
-                            block=fermilab_backend.Block(prodtools=dict(bridge.prodtools_info(), dev_dir=dev_dir)),
-                            created=records.now_utc(), beamkit_version=__version__)
-    records.save(rec, runs_dir)
-    try:
-        pushed = bridge.push_cnf(entry_path, tag, dsconf, slice_size, run_as, confirm, prodtools_dir=dev_dir)
-    except Exception as e:
-        rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
-        outcome = fermilab_backend._after_failed_push(rec, ident)
-        records.save(rec, runs_dir)
-        raise BeamkitError(f"run {run_id}: push_cnf failed ({e}){outcome}") from e
-    rec.block.campaign_id, rec.block.tarball, rec.datasets = (
-        pushed["campaign_id"], pushed["tarball"], [fermilab_backend._dataset(rec)])
-    # the campaign's njobs is what missing_indices is measured against; the
-    # requested count is only what we asked for
-    rec.njobs = pushed["njobs"]
-    records.save(rec, runs_dir)
-    if rec.njobs != njobs:
-        raise BeamkitError(f"run {run_id}: prodtools reports campaign {rec.block.campaign_id} holds {rec.njobs} jobs "
-                           f"but this call asked for {njobs}; the record now carries {rec.njobs} and nothing "
-                           f"was submitted. Understand the difference, then make_recoveries({run_id!r}, "
-                           f"{run_as!r}) submits it")
-    if submit:
-        fermilab_backend._tick_into(
-            rec, run_as, confirm, runs_dir,
-            failure=f"run {run_id}: campaign {rec.block.campaign_id} was created but the first tick failed; "
-                    f"call make_recoveries({run_id!r}, {run_as!r}) to submit it",
-            campaign_id=rec.block.campaign_id)
-    return rec.to_dict()
+    return runs.create(runs.RunRequest(tag=tag, run_as=run_as, site=site, deck_ref=deck_ref, deck_dir=deck_dir,
+                                       deck_url=deck_url, params=params, events_per_job=events_per_job,
+                                       njobs=njobs, main_input=main_input, outloc=outloc, dsconf=dsconf,
+                                       submit=submit, confirm=confirm, slice_size=slice_size,
+                                       walltime_s=walltime_s))
 
 
 def make_recoveries(run_id: str, run_as: str, confirm: bool = False) -> dict:

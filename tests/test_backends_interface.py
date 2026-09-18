@@ -29,3 +29,27 @@ def test_get_returns_the_module_and_refuses_others():
     assert backends.get("fermilab") is fermilab and backends.get("nersc") is nersc
     with pytest.raises(backends.BeamkitError, match="site must be one of"):
         backends.get("perlmutter")
+
+
+CREATION = {
+    "resolve_identity": ["req"],
+    "validate": ["req", "ident"],
+    "taken": ["ident", "tag"],
+    "retryable": ["rec"],
+    "new_block": ["req", "ident", "pin", "run_id", "dsconf"],
+    "enqueue": ["rec", "req", "ident", "pin", "rdir"],
+    "after_failure": ["rec", "ident"],
+    "submit": ["rec", "ident", "confirm"],
+}
+
+
+@pytest.mark.parametrize("backend", [fermilab, nersc], ids=["fermilab", "nersc"])
+@pytest.mark.parametrize("name,params", CREATION.items())
+def test_creation_interface(backend, name, params):
+    assert list(inspect.signature(getattr(backend, name)).parameters) == params, name
+
+
+@pytest.mark.parametrize("backend", [fermilab, nersc], ids=["fermilab", "nersc"])
+def test_block_is_a_dataclass(backend):
+    import dataclasses
+    assert dataclasses.is_dataclass(backend.Block)

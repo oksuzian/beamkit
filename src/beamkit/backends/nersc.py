@@ -4,11 +4,11 @@ Nothing here touches SAM, dCache, prodtools or a ledger."""
 import json
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from beamkit import (BeamkitError, __version__, beamfile, compose, decks, identity, iri, naming,
-                     nersc_cnf, nersc_config, nersc_templates, paths, records)
+from beamkit import (BeamkitError, beamfile, identity, iri, naming, nersc_cnf, nersc_config,
+                     nersc_templates, paths, records)
 
 WALLTIME_DEFAULT = 172800
 CUSTOM_ATTRIBUTES = {"constraint": "cpu", "licenses": "cvmfs", "module": "cvmfs"}
@@ -121,21 +121,6 @@ def run_dir(cfg, run_id) -> str:
     return f"{cfg.base_dir}/runs/{run_id}"
 
 
-def _taken(cfg, client, tag):
-    """allocate_dsconf's probe: a cnf name is taken when its run directory
-    exists on CFS. The dsconf is the fourth dot-field of the cnf name."""
-    def taken(cnf_name):
-        dsconf = cnf_name.split(".")[3]
-        return client.exists(run_dir(cfg, naming.run_id(tag, dsconf)))
-    return taken
-
-
-def _retryable(run_id, runs_dir) -> bool:
-    rec = records.try_load(run_id, runs_dir)
-    return bool(rec and rec.site == "nersc" and rec.state == "enqueue_failed"
-                and not rec.block.jobs)
-
-
 def _remote_layout(cfg, client, rd, uploads):
     """The API's mkdir is not -p: build every component from cfg.base_dir
     down (base_dir, base_dir/runs, the run dir, then its subdirs) in
@@ -181,61 +166,77 @@ def _submit_missing(rec, cfg, client, runs_dir):
     records.save(rec, runs_dir)
 
 
-def run_beamline(*, tag, run_as, deck_ref, params, events_per_job, njobs, main_input, outloc, dsconf,
-                 submit, deck_dir, deck_url, walltime_s) -> dict:
+# --- creation hooks (runs.create)
+
+def resolve_identity(req):
+    return identity.resolve(req.run_as, site="nersc", owner=config().owner)
+
+
+def validate(req, ident):
+    """NERSC's own arguments: no slice_size (procs_per_node slices the run),
+    outputs stay on CFS, walltime in range with its default filled."""
+    if req.slice_size is not None:
+        raise BeamkitError("slice_size applies to site='fermilab' only; a NERSC run is sliced by "
+                           "procs_per_node from nersc.toml")
     cfg = config()
-    ident = identity.resolve(run_as, site="nersc", owner=cfg.owner)
-    naming.validate_tag(tag)
-    params = compose.validate_inputs(events_per_job=events_per_job, njobs=njobs, outloc="scratch", params=params)
-    if outloc != "scratch":
-        raise BeamkitError(f"outloc={outloc!r}: outputs of a NERSC run stay on CFS under {cfg.base_dir}; "
+    if req.outloc != "scratch":
+        raise BeamkitError(f"outloc={req.outloc!r}: outputs of a NERSC run stay on CFS under {cfg.base_dir}; "
                            f"pass outloc='scratch' (the default) or omit it")
-    validate_walltime(walltime_s)
-    pin = decks.pin(deck_ref, deck_dir, deck_url, paths.decks_dir(), ident.production)
+    walltime_s = WALLTIME_DEFAULT if req.walltime_s is None else validate_walltime(req.walltime_s)
+    return replace(req, walltime_s=walltime_s, slice_size=cfg.procs_per_node)
+
+
+def taken(ident, tag):
+    """allocate_dsconf's probe: a cnf name is taken when its run directory
+    exists on CFS, unless a retryable local record explains that directory
+    (a failed layout of our own): probing that as taken would burn a new
+    dsconf and orphan the enqueue_failed record."""
     cfg, client = _cfg_client()
     runs_dir = paths.runs_dir()
-    # A retry after a failure that already created the remote run dir (e.g. a
-    # transient upload error) must reuse that dsconf outright: probing the
-    # remote for collision would see our own leftover directory as taken and
-    # silently burn a new dsconf, orphaning the enqueue_failed record.
-    base_dsconf = dsconf if dsconf is not None else naming.dsconf_base(pin.sha)
-    candidate_run_id = naming.run_id(tag, base_dsconf)
-    if _retryable(candidate_run_id, runs_dir):
-        dsconf = base_dsconf
-    else:
-        dsconf = naming.allocate_dsconf(ident.owner, tag, naming.dsconf_base(pin.sha), _taken(cfg, client, tag),
-                                        explicit=dsconf)
-    run_id = naming.run_id(tag, dsconf)
-    rdir = records.claim_run_dir(runs_dir, run_id, _retryable)
-    rd = run_dir(cfg, run_id)
-    cnf_name = naming.cnf_name(ident.owner, tag, dsconf)
-    rec = records.RunRecord(run_id=run_id, tag=tag, dsconf=dsconf, owner=ident.owner, run_as=run_as,
-                            deck=pin.as_record(), params=params, events_per_job=events_per_job, njobs=njobs,
-                            outloc="scratch", slice_size=cfg.procs_per_node, state="created",
-                            created=records.now_utc(), beamkit_version=__version__, site="nersc",
-                            block=Block(run_dir=rd, cnf=cnf_name, walltime_s=walltime_s, config=cfg.as_record()),
-                            datasets=[naming.dataset(ident.owner, tag, dsconf)])
-    records.save(rec, runs_dir)
-    try:
-        local_cnf = rdir / cnf_name
-        local_cnf.unlink(missing_ok=True)
-        nersc_cnf.build_cnf(pin.dir, nersc_cnf.jobpars(owner=ident.owner, tag=tag, dsconf=dsconf,
-                                                        main_input=main_input, events_per_job=events_per_job,
-                                                        njobs=njobs, params=params), local_cnf)
-        (rdir / "job.sh").write_text(nersc_templates.render_job(cfg, rd))
-        (rdir / "inner.sh").write_text(nersc_templates.render_inner(
-            cfg, run_id=run_id, run_dir=rd, owner=ident.owner, tag=tag, dsconf=dsconf,
-            events_per_job=events_per_job, main_input=main_input, params=params))
-        _remote_layout(cfg, client, rd, [(local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
-                                         (rdir / "inner.sh", f"{rd}/inner.sh")])
-    except Exception as e:
-        rec.state, rec.error = "enqueue_failed", f"{type(e).__name__}: {e}"
-        records.save(rec, runs_dir)
-        raise BeamkitError(f"run {run_id}: nothing was submitted ({e}); fix the cause and call again, "
-                           f"the run dir is reused") from e
-    if submit:
-        _submit_missing(rec, cfg, client, runs_dir)
-    return rec.to_dict()
+
+    def probe(cnf_name):
+        run_id = naming.run_id(tag, naming.dsconf_of(cnf_name))
+        rec = records.try_load(run_id, runs_dir)
+        if rec is not None and retryable(rec):
+            return False
+        return client.exists(run_dir(cfg, run_id))
+    return probe
+
+
+def retryable(rec) -> bool:
+    return rec.site == "nersc" and rec.state == "enqueue_failed" and not rec.block.jobs
+
+
+def new_block(req, ident, pin, run_id, dsconf):
+    cfg = config()
+    return Block(run_dir=run_dir(cfg, run_id), cnf=naming.cnf_name(ident.owner, req.tag, dsconf),
+                 walltime_s=req.walltime_s, config=cfg.as_record())
+
+
+def enqueue(rec, req, ident, pin, rdir):
+    """The cnf, job.sh and inner.sh built here and laid out on CFS."""
+    cfg, client = _cfg_client()
+    rd, cnf_name = rec.block.run_dir, rec.block.cnf
+    local_cnf = rdir / cnf_name
+    local_cnf.unlink(missing_ok=True)
+    nersc_cnf.build_cnf(pin.dir, nersc_cnf.jobpars(owner=ident.owner, tag=rec.tag, dsconf=rec.dsconf,
+                                                   main_input=req.main_input, events_per_job=req.events_per_job,
+                                                   njobs=req.njobs, params=req.params), local_cnf)
+    (rdir / "job.sh").write_text(nersc_templates.render_job(cfg, rd))
+    (rdir / "inner.sh").write_text(nersc_templates.render_inner(
+        cfg, run_id=rec.run_id, run_dir=rd, owner=ident.owner, tag=rec.tag, dsconf=rec.dsconf,
+        events_per_job=req.events_per_job, main_input=req.main_input, params=req.params))
+    _remote_layout(cfg, client, rd, [(local_cnf, f"{rd}/{cnf_name}"), (rdir / "job.sh", f"{rd}/job.sh"),
+                                     (rdir / "inner.sh", f"{rd}/inner.sh")])
+
+
+def after_failure(rec, ident) -> str:
+    return "; fix the cause and call again, the run dir is reused"
+
+
+def submit(rec, ident, confirm):
+    cfg, client = _cfg_client()
+    _submit_missing(rec, cfg, client, paths.runs_dir())
 
 
 def submit_run(rec, run_as) -> dict:

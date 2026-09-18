@@ -129,6 +129,15 @@ def test_outloc_other_than_scratch_refused(fake):
     assert fake.made == []
 
 
+def test_slice_size_refused_before_any_client(fake):
+    """slice_size is the Fermilab-only knob; a NERSC run is sliced by
+    procs_per_node from nersc.toml. The refusal lands in the backend's
+    validate(), before any client exists."""
+    with pytest.raises(BeamkitError, match="slice_size applies to site='fermilab' only"):
+        _run(slice_size=5)
+    assert fake.made == []
+
+
 def test_bad_walltime_refused_before_any_client(fake):
     with pytest.raises(BeamkitError, match="walltime_s"):
         _run(walltime_s=0)
@@ -194,7 +203,8 @@ def test_transport_exception_during_layout_lands_enqueue_failed_and_is_retryable
     def boom(*a, **kw):
         raise ValueError("boom: disk full")
     monkeypatch.setattr(nersc.nersc_templates, "render_inner", boom)
-    with pytest.raises(BeamkitError, match="nothing was submitted"):
+    with pytest.raises(BeamkitError,
+                       match=r"enqueue failed \(.*\); fix the cause and call again, the run dir is reused"):
         _run(njobs=1)
     rec = tools.beamline_status("T.e470313")["record"]
     assert rec["state"] == "enqueue_failed" and rec["error"] == "ValueError: boom: disk full"
