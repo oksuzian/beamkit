@@ -22,7 +22,8 @@ import sys
 import time
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 
 def _record(tool, args):
@@ -42,7 +43,8 @@ def _trip(tool):
         sys.stderr.flush()
         os._exit(7)
     if _will_trip(tool):
-        raise RuntimeError(f"{tool} refused by the fake; remedy: try the other thing")
+        # ToolError: mcp 2.x forwards only an anticipated failure's text
+        raise ToolError(f"{tool} refused by the fake; remedy: try the other thing")
 
 
 def _land(tarball):
@@ -116,7 +118,7 @@ def _safe(fn):
     def wrapper(**kw):
         try:
             return fn(**kw)
-        except RuntimeError as e:
+        except (RuntimeError, ToolError) as e:
             return _envelope("internal", str(e), "check the fake")
     return wrapper
 
@@ -201,7 +203,7 @@ def main():
     if os.environ.get("FAKE_PRODTOOLS_HANG_START") == "1":
         time.sleep(600)
     omit = set(filter(None, os.environ.get("FAKE_PRODTOOLS_OMIT", "").split(",")))
-    server = FastMCP(f"fake-prodtools-{role}")
+    server = MCPServer(f"fake-prodtools-{role}")
     for name, fn in ROLES[role].items():
         if name not in omit:
             server.tool(name=name)(fn)

@@ -1,4 +1,4 @@
-"""FastMCP wiring for beamkit: registers tools.py's functions as they are."""
+"""MCP wiring for beamkit: registers tools.py's functions as they are."""
 import inspect
 import logging
 import os
@@ -28,12 +28,12 @@ TOOLS = ("run_beamline", "make_recoveries", "submit_run", "beamline_status", "li
 
 
 def create_mcp_server():
-    """The tools.py functions ARE the MCP tools: FastMCP builds each schema
+    """The tools.py functions ARE the MCP tools: MCPServer builds each schema
     from the function's annotations (an unannotated parameter would reach the
     client as a string) and its description from the docstring."""
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
-    mcp = FastMCP("beamkit", instructions=INSTRUCTIONS)
+    mcp = MCPServer("beamkit", instructions=INSTRUCTIONS)
     for name in TOOLS:
         fn = getattr(tools, name)
         mcp.tool(name=name, description=inspect.getdoc(fn))(fn)

@@ -1,6 +1,6 @@
 """A synchronous handle on one MCP server spawned over stdio.
 
-A nested asyncio.run is impossible under FastMCP's own loop, so the session
+A nested asyncio.run is impossible under the MCP server's own loop, so the session
 lives on a private loop in a daemon thread, and its whole lifetime runs in
 ONE task there (anyio cancel scopes must be exited by the task that entered
 them). Knows nothing about prodtools; bridge.py owns that."""
@@ -25,7 +25,7 @@ class McpClientError(BeamkitError):
 
 
 class McpToolError(McpClientError):
-    """The server answered isError: message is the server's own text."""
+    """The server answered is_error: message is the server's own text."""
 
     def __init__(self, server, tool, message):
         super().__init__(message)
@@ -204,10 +204,10 @@ class StdioServer:
                 raise McpClientError(f"{self.name} server exited during {tool}: "
                                      f"{type(e).__name__}: {e}; child stderr: {tail}") from e
         text = "".join(c.text for c in res.content if getattr(c, "type", None) == "text")
-        if res.isError:
+        if res.is_error:
             raise McpToolError(self.name, tool, _strip_prefix(text, tool))
-        if res.structuredContent is not None:
-            return res.structuredContent
+        if res.structured_content is not None:
+            return res.structured_content
         try:
             return json.loads(text)
         except ValueError as e:

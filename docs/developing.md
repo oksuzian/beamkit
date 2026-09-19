@@ -12,7 +12,7 @@ env -u PYTHONPATH .venv/bin/python -m pytest -q -p no:cacheprovider
 
 `env -u PYTHONPATH` matters on a host whose shell loads the Mu2e ops
 spack environment: its `PYTHONPATH` shadows the venv. Runtime
-dependencies are `mcp<2` (2.x renamed FastMCP), `requests`, `authlib`
+dependencies are `mcp>=2.2` (the 2.x API: `MCPServer`, snake_case results), `requests`, `authlib`
 and, below Python 3.11, `tomli`. beamkit imports no prodtools code: the
 Fermilab path spawns prodtools' own MCP servers (`mcp/scripts/start_write_mcp.sh`,
 `mcp/scripts/start_mcp.sh`) from `BEAMKIT_PRODTOOLS_ROOT`, default the

@@ -16,12 +16,12 @@ def test_runtime_dependencies_are_declared():
     assert {"mcp", "requests", "authlib", "tomli"} <= names
 
 
-def test_mcp_pinned_below_2():
-    """mcp 2.x renamed FastMCP to MCPServer; server.py imports the 1.x
-    name, so an unpinned install fails at create_mcp_server()."""
+def test_mcp_pinned_to_2():
+    """server.py and mcpclient.py use the 2.x names (MCPServer, is_error,
+    structured_content); a 1.x install fails at create_mcp_server()."""
     proj = tomllib.loads(PYPROJECT.read_text())["project"]
     mcp = [d for d in proj["dependencies"] if d.startswith("mcp")][0]
-    assert "<2" in mcp
+    assert ">=2" in mcp and "<3" in mcp
 
 
 def test_console_script_points_at_server_main():

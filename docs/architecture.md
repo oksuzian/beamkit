@@ -27,7 +27,7 @@ prodtools and the network absent — how the suite runs, its far end
 
 | File | Purpose |
 | --- | --- |
-| `server.py` | FastMCP registration: the nine tool names, each `tools.py` function registered as it is, schemas built from its annotations and descriptions from its docstring. The instructions spell the states from `records.STATES`. |
+| `server.py` | MCPServer (mcp 2.x) registration: the nine tool names, each `tools.py` function registered as it is, schemas built from its annotations and descriptions from its docstring. The instructions spell the states from `records.STATES`. |
 | `tools.py` | The nine tools. Orchestration only: build a `RunRequest` or load the record, then delegate to `runs.create` or `backends.get(site)`. |
 | `runs.py` | `RunRequest` and `create(req)`: the one creation ritual, and the only writer of `created` and `enqueue_failed`. |
 | `bridge.py` | MCP client of prodtools' write and read servers; every prodtools failure becomes `BridgeError`. Reads one variable, `BEAMKIT_PRODTOOLS_ROOT`. |

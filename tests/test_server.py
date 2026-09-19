@@ -9,11 +9,11 @@ def test_tool_table_covers_every_public_tool():
                                  "get_server_info", "submit_run", "fetch_outputs"}
     for name in server.TOOLS:
         fn = getattr(tools, name)
-        assert callable(fn) and fn.__doc__, f"{name}: FastMCP describes it by its docstring"
+        assert callable(fn) and fn.__doc__, f"{name}: MCPServer describes it by its docstring"
 
 
 def test_every_tool_parameter_is_annotated():
-    """FastMCP builds each tool's schema from tools.py's own annotations; an
+    """MCPServer builds each tool's schema from tools.py's own annotations; an
     unannotated parameter reaches the client as a string."""
     for name in server.TOOLS:
         for p in inspect.signature(getattr(tools, name)).parameters.values():

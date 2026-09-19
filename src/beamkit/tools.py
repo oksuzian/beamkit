@@ -1,4 +1,4 @@
-"""The beamkit tools. server.py registers them with FastMCP as they are, so
+"""The beamkit tools. server.py registers them with MCPServer as they are, so
 every parameter is annotated and `run_as` has no default where a call
 writes. Orchestration only: load the record or build a RunRequest, then
 delegate to runs.create or backends.get(site)."""
